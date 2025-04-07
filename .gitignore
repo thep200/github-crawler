@@ -1,0 +1,6 @@
+vendor
+.vscode
+._test
+.idea
+*.iml
+*.log

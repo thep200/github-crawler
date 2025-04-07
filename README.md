@@ -2,6 +2,13 @@
 
 Project này crawl thông tin (name, start, ...) của các repository được public trên github.
 
+## Start project
+
+*   `go mod install`
+*   `go mod vendor`
+*   `go run cmd/run/main`
+
+
 ## Pre-condition
 
 Cần crawl đủ 5000 repository của github có số sao cao nhất. Các thông tin cần crawl bao gồm:
