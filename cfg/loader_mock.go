@@ -27,8 +27,7 @@ func (yl *MockLoader) Load() (*Config, error) {
 		},
 
 		// GithubApi
-		GithubApi: GithubApi{
-			// AccessToken: "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",
+		GithubApi: GithubApi{``
 			AccessToken: "",
 			ApiUrl: 	"https://api.github.com/search/repositories?q=stars:>1&sort=stars&order=desc",
 		},
