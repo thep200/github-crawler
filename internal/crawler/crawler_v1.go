@@ -29,9 +29,29 @@ func NewCrawlerV1(logger log.Logger, config *cfg.Config, mysql *db.Mysql) (*Craw
 func (c *CrawlerV1) Crawler() bool {
 	ctx := context.Background()
 	c.Logger.Info(ctx, "Starting Github star crawler version 1")
-	caller := githubapi.NewCaller(c.Logger, c.Config, 1, 100)
-	if _, err := caller.Call(); err != nil {
-		return false
+	total := make([]map[string]interface{}, 0, 5000)
+	page := 1
+	for {
+		if len(total) < 5000 {
+			c.Logger.Info(ctx, "Number of total: %d", len(total))
+			caller := githubapi.NewCaller(c.Logger, c.Config, page, 100)
+			res, err := caller.Call()
+			if err != nil {
+				return false
+			}
+			for _, i := range res {
+				c.Logger.Info(ctx, "ID: %d, Name: %s, Stars: %d\n", i.Id, i.Name, i.StargazersCount)
+				total = append(total, map[string]interface{}{
+					"id":    i.Id,
+					"name":  i.Name,
+					"stars": i.StargazersCount,
+				})
+			}
+		} else {
+			break
+		}
+		page++
 	}
+
 	return true
 }

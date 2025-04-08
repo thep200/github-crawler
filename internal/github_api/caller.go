@@ -1,3 +1,11 @@
+// Package githubapi provides a caller for the GitHub API
+// to fetch repository data.
+// It uses the GitHub API to fetch data about repositories
+// based on the provided configuration.
+// It handles authentication using an access token if provided.
+// The caller is responsible for making the API request,
+// decoding the response, and returning the data.
+
 package githubapi
 
 import (
@@ -34,10 +42,8 @@ func NewCaller(logger log.Logger, config *cfg.Config, page int, perPage int) *Ca
 }
 
 func (c *Caller) Call() ([]GithubAPIResponse, error) {
+	// Prepare
 	ctx := context.Background()
-	c.Logger.Info(ctx, "Calling GitHub API with config: %v", c.Config.GithubApi)
-
-	// Make url
 	fullUrl := fmt.Sprintf("%s&per_page=%d&page=%d", c.Config.GithubApi.ApiUrl, c.PerPage, c.Page)
 
 	// Create request
@@ -75,10 +81,6 @@ func (c *Caller) Call() ([]GithubAPIResponse, error) {
 	if err != nil {
 		c.Logger.Error(ctx, "Failed to decode response: %v", err)
 		return nil, err
-	}
-
-	for _, item := range rawResponse.Items {
-		c.Logger.Info(ctx, "Id: %d | Name: %s | Number_of_start: %d\n", item.Id, item.Name, item.StargazersCount)
 	}
 
 	return rawResponse.Items, nil
