@@ -23,7 +23,8 @@ func NewHandler(crawler crawler.Crawler, logger log.Logger) *Handler {
 
 func main() {
 	ctx := context.Background()
-	loader, _ := cfg.NewMockLoader()
+	// loader, _ := cfg.NewMockLoader()
+	loader, _ := cfg.NewViperLoader()
 	config, _ := loader.Load()
 	mysql, _ := db.NewMysql(config)
 	logger, _ := log.NewCslLogger()

@@ -1,3 +1,4 @@
+*.yaml
 vendor
 .vscode
 ._test

@@ -1,0 +1,18 @@
+app:
+  name: "prep-uploader"
+  version: "1.0.0"
+  timezone: "Asia/Ho_Chi_Minh"
+
+mysql:
+  host: "127.0.0.1"
+  port: 3306
+  username: "root"
+  password: "root"
+  database: "prep_uld"
+  max_idle_connection: 10
+  max_open_connection: 100
+  max_life_time_connection: 3600
+
+github_api:
+  api_url: "https://api.github.com/search/repositories?q=stars:>1&sort=stars&order=desc"
+  access_token: ""
