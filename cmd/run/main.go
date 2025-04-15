@@ -33,7 +33,7 @@ func main() {
 	//
 	logger.Info(ctx, "Starting Github star crawler")
 	handler := NewHandler(crawler, logger)
-	if handler.Crawler.Crawler() {
+	if handler.Crawler.Crawl() {
 		logger.Info(ctx, "Successfully!")
 	} else {
 		logger.Error(ctx, "Failed!")

@@ -4,10 +4,9 @@ Project này crawl thông tin (name, start, ...) của các repository được 
 
 ## Start project
 
-*   `go mod install`
 *   `go mod vendor`
+*   `go mod tidy`
 *   `go run cmd/run/main`
-
 
 ## Pre-condition
 
@@ -16,8 +15,9 @@ Cần crawl đủ 5000 repository của github có số sao cao nhất. Các th�
 *   Số lượng sao
 
 Rate limiting của github:
-*   60 requests / 1 hour (nếu không có token)
-*   5000 requests / 1 hour (nếu có token)
+*   10 requests / 1 minute (nếu không có token)
+*   30 requests / 1 minute (nếu có token)
+*   Chỉ lấy được 1000 kết quả trên mỗi truy vấn
 
 ![No token got rate limiting](imgs/no-token-got-rate.png)
 
@@ -45,7 +45,7 @@ Cải tiến
 ### V3
 
 Cải tiến
-*   Queue
+*   Concurrency
 *   Auto scale woker, comsumer
 
 

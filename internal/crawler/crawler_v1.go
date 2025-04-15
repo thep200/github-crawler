@@ -26,7 +26,7 @@ func NewCrawlerV1(logger log.Logger, config *cfg.Config, mysql *db.Mysql) (*Craw
 	}, nil
 }
 
-func (c *CrawlerV1) Crawler() bool {
+func (c *CrawlerV1) Crawl() bool {
 	ctx := context.Background()
 	c.Logger.Info(ctx, "Starting Github star crawler version 1")
 	total := make([]map[string]interface{}, 0, 5000)
