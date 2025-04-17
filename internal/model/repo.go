@@ -27,3 +27,20 @@ func NewRepo(config *cfg.Config, logger log.Logger, db *db.Mysql) (*Repo, error)
 func (r *Repo) TableName() string {
 	return "repos"
 }
+
+func (r *Repo) Create(user string, name string) error {
+	newRepo := &Repo{}
+	newRepo.User = user
+	newRepo.Name = name
+
+	db, err := r.Mysql.Db()
+	if err != nil {
+		return err
+	}
+
+	if err := db.Create(newRepo).Error; err != nil {
+		return err
+	}
+
+	return nil
+}
