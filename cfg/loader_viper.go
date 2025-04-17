@@ -60,7 +60,7 @@ func (yl *ViperLoader) RegisterConfigChangeCallback(callback func(*Config)) {
 
 func (yl *ViperLoader) loadConfig() error {
 	viper.AddConfigPath("cfg/yaml")
-	viper.SetConfigName("config")
+	viper.SetConfigName("mode")
 	viper.SetConfigType("yaml")
 	if err := viper.ReadInConfig(); err != nil {
 		return fmt.Errorf("[ERROR][CONFIG] failed to read config file: %w", err)

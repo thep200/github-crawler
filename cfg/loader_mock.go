@@ -10,7 +10,7 @@ func (yl *MockLoader) Load() (*Config, error) {
 	return &Config{
 		// App
 		App: App{
-			Name:    "Github star crawler",
+			Name:    "github-crawler",
 			Version: "0.0.1",
 		},
 
@@ -20,7 +20,7 @@ func (yl *MockLoader) Load() (*Config, error) {
 			Password:              "root",
 			Username:              "root",
 			Port:                  "3306",
-			Database:              "github_stars_v1",
+			Database:              "github_crawler",
 			MaxIdleConnection:     10,
 			MaxOpenConnection:     100,
 			MaxLifeTimeConnection: 3600,

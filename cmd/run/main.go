@@ -5,6 +5,7 @@ import (
 
 	"github.com/thep200/github-crawler/cfg"
 	"github.com/thep200/github-crawler/internal/crawler"
+	"github.com/thep200/github-crawler/internal/model"
 	"github.com/thep200/github-crawler/pkg/db"
 	"github.com/thep200/github-crawler/pkg/log"
 )
@@ -28,7 +29,13 @@ func main() {
 	config, _ := loader.Load()
 	mysql, _ := db.NewMysql(config)
 	logger, _ := log.NewCslLogger()
+	commitMd, _ := model.NewCommit(config, logger, mysql)
+	repoMd, _ := model.NewRepo(config, logger, mysql)
+	releaseMd, _ := model.NewRelease(config, logger, mysql)
 	crawler, _ := crawler.NewCrawlerV1(logger, config, mysql)
+
+	// Migrate database
+	mysql.Migrate(commitMd, repoMd, releaseMd)
 
 	//
 	logger.Info(ctx, "Starting Github star crawler")
