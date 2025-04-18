@@ -1,99 +1,94 @@
 package db
 
 import (
-	"database/sql"
-	"sync"
+	"context"
+	"fmt"
 	"time"
 
-	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/thep200/github-crawler/cfg"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
-)
-
-var (
-	initErr error
+	"gorm.io/gorm/logger"
 )
 
 type Mysql struct {
 	Config *cfg.Config
-	once   sync.Once
 	db     *gorm.DB
 }
 
 func NewMysql(config *cfg.Config) (*Mysql, error) {
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		config.Mysql.Username,
+		config.Mysql.Password,
+		config.Mysql.Host,
+		config.Mysql.Port,
+		config.Mysql.Database)
+
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Info),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	}
+
+	// Set connection pool settings
+	sqlDB.SetMaxIdleConns(config.Mysql.MaxIdleConnection)
+	sqlDB.SetMaxOpenConns(config.Mysql.MaxOpenConnection)
+	sqlDB.SetConnMaxLifetime(time.Duration(config.Mysql.MaxLifeTimeConnection) * time.Second)
+
+	// Test connection
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := sqlDB.PingContext(ctx); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
 	return &Mysql{
 		Config: config,
+		db:     db,
 	}, nil
 }
 
-func (m *Mysql) DSN() string {
-	config := mysqlDriver.Config{
-		User:                 m.Config.Mysql.Username,
-		Passwd:               m.Config.Mysql.Password,
-		DBName:               m.Config.Mysql.Database,
-		Addr:                 m.Config.Mysql.Host + ":" + m.Config.Mysql.Port,
-		Net:                  "tcp",
-		ParseTime:            true,
-		AllowNativePasswords: true,
-	}
-	return config.FormatDSN()
-}
-
 func (m *Mysql) Db() (*gorm.DB, error) {
-	m.once.Do(func() {
-		// Open connection
-		var db *gorm.DB
-		db, initErr = gorm.Open(mysql.Open(m.DSN()), &gorm.Config{})
-		if initErr != nil {
-			return
-		}
-
-		// Get sqlDB
-		var sqlDB *sql.DB
-		sqlDB, initErr = db.DB()
-		if initErr != nil {
-			return
-		}
-
-		// Setting connection pool
-		sqlDB.SetMaxIdleConns(m.Config.Mysql.MaxIdleConnection)
-		sqlDB.SetMaxOpenConns(m.Config.Mysql.MaxOpenConnection)
-		sqlDB.SetConnMaxLifetime(time.Duration(m.Config.Mysql.MaxLifeTimeConnection) * time.Second)
-
-		//
-		m.db = db
-	})
-	return m.db, initErr
+	if m.db == nil {
+		return nil, fmt.Errorf("database connection not initialized")
+	}
+	return m.db, nil
 }
 
-func (m *Mysql) Ping() error {
-	db, err := m.Db()
-	if err != nil {
-		return err
+// Migrate runs auto migration for the provided models
+func (m *Mysql) Migrate(models ...interface{}) error {
+	if m.db == nil {
+		return fmt.Errorf("database connection not initialized")
 	}
-	sqlDB, err := db.DB()
-	if err != nil {
-		return err
-	}
-	return sqlDB.Ping()
-}
 
-func (m *Mysql) Close() error {
-	if m.db != nil {
-		sqlDB, err := m.db.DB()
-		if err != nil {
-			return err
+	fmt.Println("Starting database migration...")
+	for _, model := range models {
+		if err := m.db.AutoMigrate(model); err != nil {
+			return fmt.Errorf("failed to migrate model %T: %w", model, err)
 		}
-		sqlDB.Close()
+		fmt.Printf("Successfully migrated model: %T\n", model)
 	}
+	fmt.Println("Database migration completed successfully")
+
 	return nil
 }
 
-func (m *Mysql) Migrate(models ...interface{}) error {
-	db, err := m.Db()
-	if err != nil {
-		return err
+// Close closes the database connection
+func (m *Mysql) Close() error {
+	if m.db == nil {
+		return nil
 	}
-	return db.AutoMigrate(models...)
+
+	sqlDB, err := m.db.DB()
+	if err != nil {
+		return fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	}
+
+	return sqlDB.Close()
 }
