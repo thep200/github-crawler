@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/thep200/github-crawler/cfg"
@@ -74,40 +75,121 @@ func (c *Caller) Call() ([]GithubAPIResponse, error) {
 	defer resp.Body.Close()
 
 	// Kiểm tra giới hạn tốc độ
-	rateLimit := resp.Header.Get("X-RateLimit-Limit")
 	rateRemaining := resp.Header.Get("X-RateLimit-Remaining")
-	rateReset := resp.Header.Get("X-RateLimit-Reset")
 
 	if resp.StatusCode == http.StatusForbidden && rateRemaining == "0" {
-		c.Logger.Error(ctx, "Đã vượt quá giới hạn tốc độ GitHub API. Giới hạn: %s, Đặt lại: %s",
-			rateLimit, rateReset)
 		return nil, fmt.Errorf("vượt quá giới hạn tốc độ")
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		c.Logger.Error(ctx, "GitHub API trả về trạng thái không OK: %s", resp.Status)
 		return nil, fmt.Errorf("không thể nhận phản hồi: %v", resp.Status)
-	}
-
-	// Ghi log thông tin giới hạn tốc độ
-	if c.Page == 1 || c.Page%5 == 0 {
-		c.Logger.Info(ctx, "Giới hạn tốc độ GitHub API - Còn lại: %s/%s, Đặt lại: %s",
-			rateRemaining, rateLimit, rateReset)
 	}
 
 	// Giải mã phản hồi
 	rawResponse := &RawResponse{}
 	err = json.NewDecoder(resp.Body).Decode(rawResponse)
 	if err != nil {
-		c.Logger.Error(ctx, "Không thể giải mã phản hồi: %v", err)
 		return nil, err
 	}
 
-	// Báo cáo tổng số trên trang đầu tiên
-	if c.Page == 1 {
-		c.Logger.Info(ctx, "GitHub báo cáo %d repository phù hợp tổng cộng (sẽ trả về tối đa 1000)",
-			rawResponse.TotalCount)
+	return rawResponse.Items, nil
+}
+
+// CallReleases gọi API releases của GitHub cho một repository cụ thể
+func (c *Caller) CallReleases(user, repo string) ([]ReleaseResponse, error) {
+	ctx := context.Background()
+
+	// Thay thế placeholders trong URL template
+	releasesUrl := strings.ReplaceAll(c.Config.GithubApi.ReleasesApiUrl, "{user}", user)
+	releasesUrl = strings.ReplaceAll(releasesUrl, "{repo}", repo)
+
+	// Tạo request
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releasesUrl, nil)
+	if err != nil {
+		return nil, err
 	}
 
-	return rawResponse.Items, nil
+	// Thiết lập headers
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	if c.Config.GithubApi.AccessToken != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("token %s", c.Config.GithubApi.AccessToken))
+	}
+
+	// Thực hiện request
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	// Kiểm tra giới hạn tốc độ
+	rateRemaining := resp.Header.Get("X-RateLimit-Remaining")
+	if resp.StatusCode == http.StatusForbidden && rateRemaining == "0" {
+		return nil, fmt.Errorf("vượt quá giới hạn tốc độ")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("không thể nhận phản hồi: %v", resp.Status)
+	}
+
+	// Giải mã phản hồi
+	var releases []ReleaseResponse
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+		return nil, err
+	}
+
+	return releases, nil
+}
+
+// CallCommits gọi API commits của GitHub cho một repository cụ thể
+func (c *Caller) CallCommits(user, repo string) ([]CommitResponse, error) {
+	ctx := context.Background()
+
+	// Thay thế placeholders trong URL template
+	commitsUrl := strings.ReplaceAll(c.Config.GithubApi.CommitsApiUrl, "{user}", user)
+	commitsUrl = strings.ReplaceAll(commitsUrl, "{repo}", repo)
+
+	// Tạo request
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, commitsUrl, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Thiết lập headers
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	if c.Config.GithubApi.AccessToken != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("token %s", c.Config.GithubApi.AccessToken))
+	}
+
+	// Thực hiện request
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	// Kiểm tra giới hạn tốc độ
+	rateRemaining := resp.Header.Get("X-RateLimit-Remaining")
+	if resp.StatusCode == http.StatusForbidden && rateRemaining == "0" {
+		return nil, fmt.Errorf("vượt quá giới hạn tốc độ")
+	}
+
+	if resp.StatusCode == 404 {
+		// Repository không có commit nào
+		return []CommitResponse{}, nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("không thể nhận phản hồi: %v", resp.Status)
+	}
+
+	// Giải mã phản hồi
+	var commits []CommitResponse
+	if err := json.NewDecoder(resp.Body).Decode(&commits); err != nil {
+		return nil, err
+	}
+
+	return commits, nil
 }

@@ -54,3 +54,8 @@ Cải tiến
 Chú ý so sánh các các lựa chọn thực hiện. Ví dụ: Tại sao lại chọn token thay vì proxy?, các technical để vượt qua rate limiting (proxy hay thêm các token)?. Các kỹ thuật xử lý rate limiting.
 
 
+## Run command and access via `http://localhost:6060/pkg/prepuld/?m=all`
+
+```sh
+godoc -http=:6060
+```

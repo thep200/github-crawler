@@ -28,8 +28,12 @@ func (yl *MockLoader) Load() (*Config, error) {
 
 		// GithubApi
 		GithubApi: GithubApi{
-			AccessToken: "",
-			ApiUrl: 	"https://api.github.com/search/repositories?q=stars:>1&sort=stars&order=desc",
+			AccessToken:       "",
+			ApiUrl:            "https://api.github.com/search/repositories?q=stars:>1&sort=stars&order=desc",
+			ReleasesApiUrl:    "https://api.github.com/repos/{user}/{repo}/releases",
+			CommitsApiUrl:     "https://api.github.com/repos/{user}/{repo}/commits",
+			RequestsPerSecond: 10,
+			ThrottleDelay:     500,
 		},
 	}, nil
 }

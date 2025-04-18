@@ -18,8 +18,12 @@ type (
 	}
 
 	GithubApi struct {
-		AccessToken string `yaml:"access_token" mapstructure:"access_token"`
-		ApiUrl      string `yaml:"api_url" mapstructure:"api_url"`
+		AccessToken       string `yaml:"access_token" mapstructure:"access_token"`
+		ApiUrl            string `yaml:"api_url" mapstructure:"api_url"`
+		ReleasesApiUrl    string `yaml:"releases_api_url" mapstructure:"releases_api_url"` // Template URL for releases API
+		CommitsApiUrl     string `yaml:"commits_api_url" mapstructure:"commits_api_url"`   // Template URL for commits API
+		RequestsPerSecond int    `yaml:"requests_per_second" mapstructure:"requests_per_second"`
+		ThrottleDelay     int    `yaml:"throttle_delay" mapstructure:"throttle_delay"` // Milliseconds
 	}
 )
 
