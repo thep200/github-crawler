@@ -5,8 +5,8 @@ package crawler
 
 import (
 	"context"
-	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/thep200/github-crawler/cfg"
@@ -19,13 +19,15 @@ import (
 )
 
 type CrawlerV1 struct {
-	Logger      log.Logger
-	Config      *cfg.Config
-	Mysql       *db.Mysql
-	RepoMd      *model.Repo
-	ReleaseMd   *model.Release
-	CommitMd    *model.Commit
-	rateLimiter *limiter.RateLimiter
+	Logger        log.Logger
+	Config        *cfg.Config
+	Mysql         *db.Mysql
+	RepoMd        *model.Repo
+	ReleaseMd     *model.Release
+	CommitMd      *model.Commit
+	rateLimiter   *limiter.RateLimiter
+	processedIDs  []int64
+	processedLock sync.RWMutex
 }
 
 func NewCrawlerV1(logger log.Logger, config *cfg.Config, mysql *db.Mysql) (*CrawlerV1, error) {
@@ -34,14 +36,36 @@ func NewCrawlerV1(logger log.Logger, config *cfg.Config, mysql *db.Mysql) (*Craw
 	commitMd, _ := model.NewCommit(config, logger, mysql)
 	rateLimiter := limiter.NewRateLimiter(config.GithubApi.RequestsPerSecond)
 	return &CrawlerV1{
-		Logger:      logger,
-		Config:      config,
-		Mysql:       mysql,
-		RepoMd:      repoMd,
-		ReleaseMd:   releaseMd,
-		CommitMd:    commitMd,
-		rateLimiter: rateLimiter,
+		Logger:        logger,
+		Config:        config,
+		Mysql:         mysql,
+		RepoMd:        repoMd,
+		ReleaseMd:     releaseMd,
+		CommitMd:      commitMd,
+		rateLimiter:   rateLimiter,
+		processedIDs:  make([]int64, 0, 5000),
+		processedLock: sync.RWMutex{},
 	}, nil
+}
+
+//
+func (c *CrawlerV1) isProcessed(repoID int64) bool {
+	c.processedLock.RLock()
+	defer c.processedLock.RUnlock()
+
+	for _, id := range c.processedIDs {
+		if id == repoID {
+			return true
+		}
+	}
+	return false
+}
+
+//
+func (c *CrawlerV1) addProcessedID(repoID int64) {
+	c.processedLock.Lock()
+	defer c.processedLock.Unlock()
+	c.processedIDs = append(c.processedIDs, repoID)
 }
 
 func (c *CrawlerV1) Crawl() bool {
@@ -49,7 +73,7 @@ func (c *CrawlerV1) Crawl() bool {
 	startTime := time.Now()
 	c.Logger.Info(ctx, "Start crawl data repository GitHub %s", startTime.Format(time.RFC3339))
 
-	//
+	// Connect to database
 	db, err := c.Mysql.Db()
 	if err != nil {
 		c.Logger.Error(ctx, "Cannot connect to database: %v", err)
@@ -78,34 +102,25 @@ func (c *CrawlerV1) Crawl() bool {
 	perPage := 100
 	apiCaller := githubapi.NewCaller(c.Logger, c.Config, page, perPage)
 
-	// GitHub Search API có limit 1000 kết quả cho mỗi truy vấn tìm kiếm
+	// GitHub Search API limit
 	maxApiResults := 1000
-
-	// Theo dõi kết quả null để biết khi nào đạt tới giới hạn
 	emptyResultsCount := 0
 
 	for totalRepos < maxRepos {
-		// Dừng nếu đã đạt tới giới hạn
 		if page > maxApiResults/perPage {
 			break
 		}
+		c.applyRateLimit()
 
-		// Rate limiter
-		for !c.rateLimiter.Allow() {
-			time.Sleep(time.Duration(c.Config.GithubApi.ThrottleDelay) * time.Millisecond)
-		}
-
-		// Call GitHub API
+		//
 		apiCaller.Page = page
 		apiCaller.PerPage = perPage
 		repos, err := apiCaller.Call()
 		if err != nil {
-			// Nếu bị dính rate limit thì đợi rồi gọi lại
-			if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "rate limit") {
+			if c.isRateLimitError(err) {
 				time.Sleep(5 * time.Second)
 				continue
 			}
-
 			tx.Rollback()
 			c.Logger.Error(ctx, "Cannot call GitHub API: %v", err)
 			return false
@@ -120,60 +135,23 @@ func (c *CrawlerV1) Crawl() bool {
 			page++
 			continue
 		}
-
 		emptyResultsCount = 0
 
-		// Data repository
+		// Process each repository
 		for _, repo := range repos {
 			if totalRepos >= maxRepos {
 				break
 			}
-
-			// Username data and repo Name
-			user := repo.Owner.Login
-			repoName := repo.Name
-
-			if user == "" {
-				user, repoName = extractUserAndRepo(repo.FullName)
-				if user == "" {
-					user = "unknown"
-				}
+			repoModel, isSkipped, err := c.crawlRepo(tx, repo)
+			if err != nil {
+				tx.Rollback()
+				return false
 			}
-
-			// Check duplicate repository
-			var existingRepo model.Repo
-			result := tx.Where("id = ?", repo.Id).First(&existingRepo)
-
-			if result.Error == nil {
+			if isSkipped {
 				skippedRepos++
 				continue
-			} else if result.Error != gorm.ErrRecordNotFound {
-				tx.Rollback()
-				return false
 			}
-
-			// Save repository
-			repoModel := &model.Repo{
-				ID:         int(repo.Id),
-				User:       model.TruncateString(user, 250),
-				Name:       model.TruncateString(repoName, 250),
-				StarCount:  int(repo.StargazersCount),
-				ForkCount:  int(repo.ForksCount),
-				WatchCount: int(repo.WatchersCount),
-				IssueCount: int(repo.OpenIssuesCount),
-				Model: model.Model{
-					Config: c.Config,
-					Logger: c.Logger,
-					Mysql:  c.Mysql,
-				},
-			}
-
-			if err := tx.Create(repoModel).Error; err != nil {
-				tx.Rollback()
-				return false
-			}
-
-			//
+			totalRepos++
 			if totalRepos > 0 && totalRepos%10 == 0 {
 				if err := tx.Commit().Error; err != nil {
 					return false
@@ -184,96 +162,24 @@ func (c *CrawlerV1) Crawl() bool {
 				}
 			}
 
-			// Call API để lấy data releases
-			for !c.rateLimiter.Allow() {
-				time.Sleep(time.Duration(c.Config.GithubApi.ThrottleDelay) * time.Millisecond)
+			//
+			user := repo.Owner.Login
+			repoName := repo.Name
+			if user == "" {
+				user, repoName = extractUserAndRepo(repo.FullName)
+				if user == "" {
+					user = "unknown"
+				}
 			}
 
-			releases, err := apiCaller.CallReleases(user, repoName)
+			//
+			_, releasesCount, commitsCount, err := c.crawlReleases(ctx, tx, apiCaller, user, repoName, repoModel.ID)
 			if err != nil {
-				if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "rate limit") {
-					time.Sleep(5 * time.Second)
-					releases, err = apiCaller.CallReleases(user, repoName)
-					if err != nil {
-						continue
-					}
-				} else {
-					continue
-				}
+				continue
 			}
 
-			// Release data
-			for _, release := range releases {
-				releaseContent := release.Body
-				if releaseContent == "" {
-					releaseContent = fmt.Sprintf("Release %s for %s/%s", release.TagName, user, repoName)
-				}
-
-				releaseModel := &model.Release{
-					Content: model.TruncateString(releaseContent, 65000),
-					RepoID:  int(repo.Id),
-					Model: model.Model{
-						Config: c.Config,
-						Logger: c.Logger,
-						Mysql:  c.Mysql,
-					},
-				}
-
-				if err := tx.Create(releaseModel).Error; err != nil {
-					tx.Rollback()
-					return false
-				}
-
-				totalReleases++
-
-				// Call API để lấy data commit commits
-				for !c.rateLimiter.Allow() {
-					time.Sleep(time.Duration(c.Config.GithubApi.ThrottleDelay) * time.Millisecond)
-				}
-
-				commits, err := apiCaller.CallCommits(user, repoName)
-				if err != nil {
-					if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "rate limit") {
-						time.Sleep(60 * time.Second)
-						commits, err = apiCaller.CallCommits(user, repoName)
-						if err != nil {
-							continue
-						}
-					} else {
-						continue
-					}
-				}
-
-				// Commit data
-				for _, commit := range commits {
-					hashValue := model.TruncateString(commit.SHA, 250)
-					messageValue := model.TruncateString(commit.Commit.Message, 65000)
-
-					//
-					commitModel := &model.Commit{
-						Hash:      hashValue,
-						Message:   messageValue,
-						ReleaseID: int(releaseModel.ID),
-						Model: model.Model{
-							Config: c.Config,
-							Logger: c.Logger,
-							Mysql:  c.Mysql,
-						},
-					}
-
-					if err := tx.Create(commitModel).Error; err != nil {
-						if strings.Contains(err.Error(), "Duplicate entry") {
-							continue
-						}
-						tx.Rollback()
-						return false
-					}
-
-					totalCommits++
-				}
-			}
-
-			totalRepos++
+			totalReleases += releasesCount
+			totalCommits += commitsCount
 		}
 
 		page++
@@ -290,17 +196,187 @@ func (c *CrawlerV1) Crawl() bool {
 		}
 	}
 
-	//
+	// Final commit
 	if tx != nil {
 		if err := tx.Commit().Error; err != nil {
 			return false
 		}
 	}
 
+	// Log results
+	c.logCrawlResults(ctx, startTime, totalRepos, totalReleases, totalCommits, skippedRepos)
+
+	return true
+}
+
+func (c *CrawlerV1) crawlRepo(tx *gorm.DB, repo githubapi.GithubAPIResponse) (*model.Repo, bool, error) {
+	// Extract username and repo name
+	user := repo.Owner.Login
+	repoName := repo.Name
+
+	if user == "" {
+		user, repoName = extractUserAndRepo(repo.FullName)
+		if user == "" {
+			user = "unknown"
+		}
+	}
+
+	//
+	if c.isProcessed(repo.Id) {
+		return nil, true, nil
+	}
+
+	repoModel := &model.Repo{
+		ID:         int(repo.Id),
+		User:       model.TruncateString(user, 250),
+		Name:       model.TruncateString(repoName, 250),
+		StarCount:  int(repo.StargazersCount),
+		ForkCount:  int(repo.ForksCount),
+		WatchCount: int(repo.WatchersCount),
+		IssueCount: int(repo.OpenIssuesCount),
+		Model: model.Model{
+			Config: c.Config,
+			Logger: c.Logger,
+			Mysql:  c.Mysql,
+		},
+	}
+
+	if err := tx.Create(repoModel).Error; err != nil {
+		return nil, false, err
+	}
+
+	// Add newly processed ID to our in-memory list
+	c.addProcessedID(repo.Id)
+
+	return repoModel, false, nil
+}
+
+func (c *CrawlerV1) crawlReleases(ctx context.Context, tx *gorm.DB, apiCaller *githubapi.Caller, user, repoName string, repoID int) ([]githubapi.ReleaseResponse, int, int, error) {
+	c.applyRateLimit()
+
+	// Call API to get releases
+	releases, err := apiCaller.CallReleases(user, repoName)
+	if err != nil {
+		if c.isRateLimitError(err) {
+			time.Sleep(5 * time.Second)
+			releases, err = apiCaller.CallReleases(user, repoName)
+			if err != nil {
+				return nil, 0, 0, err
+			}
+		} else {
+			return nil, 0, 0, err
+		}
+	}
+
+	releasesCount := 0
+	commitsCount := 0
+
+	// Process each release
+	for _, release := range releases {
+		releaseModel, err := c.crawlRelease(tx, release, user, repoName, repoID)
+		if err != nil {
+			continue
+		}
+
+		releasesCount++
+
+		// Process commits for this release
+		_, count, err := c.crawlCommits(tx, apiCaller, user, repoName, releaseModel.ID)
+		if err != nil {
+			continue
+		}
+
+		commitsCount += count
+	}
+
+	return releases, releasesCount, commitsCount, nil
+}
+
+func (c *CrawlerV1) crawlRelease(tx *gorm.DB, release githubapi.ReleaseResponse, user, repoName string, repoID int) (*model.Release, error) {
+	releaseContent := release.Body
+	releaseModel := &model.Release{
+		Content: model.TruncateString(releaseContent, 65000),
+		RepoID:  repoID,
+		Model: model.Model{
+			Config: c.Config,
+			Logger: c.Logger,
+			Mysql:  c.Mysql,
+		},
+	}
+
+	if err := tx.Create(releaseModel).Error; err != nil {
+		return nil, err
+	}
+
+	return releaseModel, nil
+}
+
+func (c *CrawlerV1) crawlCommits(tx *gorm.DB, apiCaller *githubapi.Caller, user, repoName string, releaseID int) ([]githubapi.CommitResponse, int, error) {
+	c.applyRateLimit()
+
+	// Call API to get commits
+	commits, err := apiCaller.CallCommits(user, repoName)
+	if err != nil {
+		if c.isRateLimitError(err) {
+			time.Sleep(60 * time.Second)
+			commits, err = apiCaller.CallCommits(user, repoName)
+			if err != nil {
+				return nil, 0, err
+			}
+		} else {
+			return nil, 0, err
+		}
+	}
+
+	commitsCount := 0
+
+	// Process each commit
+	for _, commit := range commits {
+		if err := c.saveCommit(tx, commit, releaseID); err != nil {
+			if !strings.Contains(err.Error(), "Duplicate entry") {
+				return commits, commitsCount, err
+			}
+			continue
+		}
+
+		commitsCount++
+	}
+
+	return commits, commitsCount, nil
+}
+
+func (c *CrawlerV1) saveCommit(tx *gorm.DB, commit githubapi.CommitResponse, releaseID int) error {
+	hashValue := model.TruncateString(commit.SHA, 250)
+	messageValue := model.TruncateString(commit.Commit.Message, 65000)
+
+	commitModel := &model.Commit{
+		Hash:      hashValue,
+		Message:   messageValue,
+		ReleaseID: releaseID,
+		Model: model.Model{
+			Config: c.Config,
+			Logger: c.Logger,
+			Mysql:  c.Mysql,
+		},
+	}
+
+	return tx.Create(commitModel).Error
+}
+
+func (c *CrawlerV1) applyRateLimit() {
+	for !c.rateLimiter.Allow() {
+		time.Sleep(time.Duration(c.Config.GithubApi.ThrottleDelay) * time.Millisecond)
+	}
+}
+
+func (c *CrawlerV1) isRateLimitError(err error) bool {
+	return strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "rate limit")
+}
+
+func (c *CrawlerV1) logCrawlResults(ctx context.Context, startTime time.Time, totalRepos, totalReleases, totalCommits, skippedRepos int) {
 	endTime := time.Now()
 	duration := endTime.Sub(startTime)
 
-	//
 	c.Logger.Info(ctx, "==== KẾT QUẢ CRAWL ====")
 	c.Logger.Info(ctx, "Thời gian bắt đầu: %s", startTime.Format(time.RFC3339))
 	c.Logger.Info(ctx, "Thời gian kết thúc: %s", endTime.Format(time.RFC3339))
@@ -309,8 +385,6 @@ func (c *CrawlerV1) Crawl() bool {
 	c.Logger.Info(ctx, "Tổng số releases đã crawl: %d", totalReleases)
 	c.Logger.Info(ctx, "Tổng số commits đã crawl: %d", totalCommits)
 	c.Logger.Info(ctx, "Tổng số repository bỏ qua (đã tồn tại): %d", skippedRepos)
-
-	return true
 }
 
 // Lấy username và tên repository từ tên đầy đủ

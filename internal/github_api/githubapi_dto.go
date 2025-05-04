@@ -1,5 +1,5 @@
 // Gói dto cung cấp các đối tượng truyền dữ liệu cho dự án
-// Chuyển đổi phản hồi api tìm kiếm github thành một cấu trúc
+// Chuyển đổi response api tìm kiếm github thành một cấu trúc
 
 package githubapi
 

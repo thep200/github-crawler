@@ -11,7 +11,7 @@ import (
 type Commit struct {
 	Model
 	Hash      string `json:"hash" gorm:"column:hash;type:varchar(255);uniqueIndex"`
-	Message   string `json:"message" gorm:"column:message;type:text;size:65535"` // Định nghĩa rõ kích thước
+	Message   string `json:"message" gorm:"column:message;type:text;size:65535"`
 	ReleaseID int    `json:"release_id" gorm:"column:release_id;index;not null"`
 }
 
@@ -32,12 +32,8 @@ func (c *Commit) TableName() string {
 
 func (c *Commit) Create(hash string, message string, releaseID int) error {
 	ctx := context.Background()
-	// Cắt nội dung để tránh lỗi "data too long"
-	hash = TruncateString(hash, 250)         // Dự phòng cho varchar(255)
-	message = TruncateString(message, 65000) // Dự phòng cho text
-
-	c.Logger.Info(ctx, "Creating commit with hash=%s (length=%d), message length=%d, releaseID=%d",
-		hash, len(hash), len(message), releaseID)
+	hash = TruncateString(hash, 250)
+	message = TruncateString(message, 65000)
 
 	newCommit := &Commit{}
 	newCommit.Hash = hash

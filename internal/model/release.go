@@ -10,7 +10,8 @@ import (
 
 type Release struct {
 	Model
-	Content string `json:"content" gorm:"column:content;type:text;size:65535"` // Định nghĩa rõ kích thước
+	ID      int    `json:"id" gorm:"column:id;primaryKey;autoIncrement:false"`
+	Content string `json:"content" gorm:"column:content;type:text;size:65535"`
 	RepoID  int    `json:"repo_id" gorm:"column:repo_id;index;not null"`
 }
 
@@ -31,10 +32,7 @@ func (r *Release) TableName() string {
 
 func (r *Release) Create(content string, repoID int) error {
 	ctx := context.Background()
-	// Cắt nội dung để tránh lỗi "data too long"
-	content = TruncateString(content, 65000) // Để dự phòng một chút
-
-	r.Logger.Info(ctx, "Creating release with content length=%d, repoID=%d", len(content), repoID)
+	content = TruncateString(content, 65000)
 
 	newRelease := &Release{}
 	newRelease.Content = content
