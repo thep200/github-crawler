@@ -187,24 +187,24 @@ func (c *CrawlerV2) Crawl() bool {
 					defer mainWg.Done()
 					defer func() { <-c.repoWorkers }() // Trả lại slot
 
-					// Tạo transaction riêng cho mỗi goroutine
-					tx := db.Begin()
-					if tx.Error != nil {
-						c.errorChan <- tx.Error
+					// Mỗi repo sẽ có transaction riêng
+					repoTx := db.Begin()
+					if repoTx.Error != nil {
+						c.errorChan <- repoTx.Error
 						return
 					}
 
 					defer func() {
 						if r := recover(); r != nil {
-							tx.Rollback()
+							repoTx.Rollback()
 							c.errorChan <- fmt.Errorf("panic xảy ra trong goroutine xử lý repo: %v", r)
 						}
 					}()
 
 					// Xử lý repo
-					repoModel, isSkipped, err := c.crawlRepo(crawlCtx, tx, repo)
+					repoModel, isSkipped, err := c.crawlRepo(crawlCtx, repoTx, repo)
 					if err != nil {
-						tx.Rollback()
+						repoTx.Rollback()
 						c.errorChan <- err
 						return
 					}
@@ -213,7 +213,13 @@ func (c *CrawlerV2) Crawl() bool {
 						counterLock.Lock()
 						skippedRepos++
 						counterLock.Unlock()
-						tx.Rollback() // Không cần commit nếu bỏ qua repo
+						repoTx.Rollback() // Không cần commit nếu bỏ qua repo
+						return
+					}
+
+					// Commit transaction repo trước
+					if err := repoTx.Commit().Error; err != nil {
+						c.errorChan <- err
 						return
 					}
 
@@ -227,17 +233,11 @@ func (c *CrawlerV2) Crawl() bool {
 						}
 					}
 
-					// Thu thập releases cho repository này
-					_, relCount, comCount, err := c.crawlReleases(crawlCtx, tx, githubapi.NewCaller(c.Logger, c.Config, 1, 100), user, repoName, repoModel.ID)
+					// Thu thập releases cho repository này - không dùng transaction ở đây
+					_, relCount, comCount, err := c.crawlReleases(crawlCtx, db, githubapi.NewCaller(c.Logger, c.Config, 1, 100), user, repoName, repoModel.ID)
 					if err != nil {
 						c.Logger.Warn(crawlCtx, "Lỗi khi crawl releases cho %s/%s: %v", user, repoName, err)
-						// Vẫn commit repo đã tạo ngay cả khi có lỗi khi crawl releases
-					}
-
-					// Commit transaction
-					if err := tx.Commit().Error; err != nil {
-						c.errorChan <- err
-						return
+						// Vẫn tiếp tục vì repo đã được commit
 					}
 
 					counterLock.Lock()
@@ -400,7 +400,7 @@ func (c *CrawlerV2) crawlRepo(ctx context.Context, tx *gorm.DB, repo githubapi.G
 }
 
 // Crawl releases cho một repository
-func (c *CrawlerV2) crawlReleases(ctx context.Context, tx *gorm.DB, apiCaller *githubapi.Caller, user, repoName string, repoID int) ([]githubapi.ReleaseResponse, int, int, error) {
+func (c *CrawlerV2) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *githubapi.Caller, user, repoName string, repoID int) ([]githubapi.ReleaseResponse, int, int, error) {
 	c.applyRateLimit()
 
 	// Call API to get releases
@@ -450,7 +450,7 @@ func (c *CrawlerV2) crawlReleases(ctx context.Context, tx *gorm.DB, apiCaller *g
 				defer func() { <-c.releaseWorkers }() // Trả lại slot
 
 				// Tạo transaction mới cho mỗi release
-				releaseTx := tx.Begin()
+				releaseTx := db.Begin()
 				if releaseTx.Error != nil {
 					c.errorChan <- releaseTx.Error
 					return
@@ -482,19 +482,19 @@ func (c *CrawlerV2) crawlReleases(ctx context.Context, tx *gorm.DB, apiCaller *g
 					return
 				}
 
-				c.addProcessedRelease(repoID, release.Name)
-
-				// Thu thập commits cho release này
-				_, commitCount, err := c.crawlCommits(releaseCtx, releaseTx, apiCaller, user, repoName, releaseModel.ID)
-				if err != nil {
-					c.Logger.Warn(releaseCtx, "Lỗi khi crawl commits cho release %s: %v", release.Name, err)
-					// Vẫn commit release đã tạo
-				}
-
-				// Commit transaction
+				// Commit transaction release trước
 				if err := releaseTx.Commit().Error; err != nil {
 					c.errorChan <- err
 					return
+				}
+
+				c.addProcessedRelease(repoID, release.Name)
+
+				// Thu thập commits cho release này - không dùng transaction của release
+				_, commitCount, err := c.crawlCommits(releaseCtx, db, apiCaller, user, repoName, releaseModel.ID)
+				if err != nil {
+					c.Logger.Warn(releaseCtx, "Lỗi khi crawl commits cho release %s: %v", release.Name, err)
+					// Vẫn tiếp tục vì release đã được commit
 				}
 
 				// Cập nhật số lượng đã xử lý
@@ -514,7 +514,7 @@ func (c *CrawlerV2) crawlReleases(ctx context.Context, tx *gorm.DB, apiCaller *g
 }
 
 // Crawl commits cho một release
-func (c *CrawlerV2) crawlCommits(ctx context.Context, tx *gorm.DB, apiCaller *githubapi.Caller, user, repoName string, releaseID int) ([]githubapi.CommitResponse, int, error) {
+func (c *CrawlerV2) crawlCommits(ctx context.Context, db *gorm.DB, apiCaller *githubapi.Caller, user, repoName string, releaseID int) ([]githubapi.CommitResponse, int, error) {
 	c.applyRateLimit()
 
 	// Gọi API để lấy commits
@@ -566,6 +566,13 @@ func (c *CrawlerV2) crawlCommits(ctx context.Context, tx *gorm.DB, apiCaller *gi
 					}
 				}()
 
+				// Tạo transaction mới cho mỗi commit
+				commitTx := db.Begin()
+				if commitTx.Error != nil {
+					c.errorChan <- commitTx.Error
+					return
+				}
+
 				// Lưu commit
 				commitModel := &model.Commit{
 					Hash:      model.TruncateString(commit.SHA, 250),
@@ -578,11 +585,18 @@ func (c *CrawlerV2) crawlCommits(ctx context.Context, tx *gorm.DB, apiCaller *gi
 					},
 				}
 
-				if err := tx.Create(commitModel).Error; err != nil {
+				if err := commitTx.Create(commitModel).Error; err != nil {
+					commitTx.Rollback()
 					if !strings.Contains(err.Error(), "Duplicate entry") {
 						c.errorChan <- err
-						return
 					}
+					return
+				}
+
+				// Commit transaction
+				if err := commitTx.Commit().Error; err != nil {
+					c.errorChan <- err
+					return
 				}
 
 				c.addProcessedCommit(commit.SHA)
