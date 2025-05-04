@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 
 	"github.com/thep200/github-crawler/cfg"
 	"github.com/thep200/github-crawler/internal/crawler"
@@ -23,8 +24,15 @@ func NewHandler(crawler crawler.Crawler, logger log.Logger) *Handler {
 }
 
 func main() {
+	// Parse parameter from command line
+	version := flag.String("version", "", "Version of crawler to use")
+	flag.Parse()
+	if *version == "" {
+		panic("Version is required. Use -version flag to specify the version, like -version=v1")
+	}
+
+	// Dependency injection
 	ctx := context.Background()
-	// loader, _ := cfg.NewMockLoader()
 	loader, _ := cfg.NewViperLoader()
 	config, _ := loader.Load()
 	mysql, _ := db.NewMysql(config)
@@ -32,12 +40,12 @@ func main() {
 	commitMd, _ := model.NewCommit(config, logger, mysql)
 	repoMd, _ := model.NewRepo(config, logger, mysql)
 	releaseMd, _ := model.NewRelease(config, logger, mysql)
-	crawler, _ := crawler.NewCrawlerV1(logger, config, mysql)
+	crawler, _ := crawler.FactoryCrawler("v1", logger, config, mysql)
 
 	// Migrate database
 	mysql.Migrate(commitMd, repoMd, releaseMd)
 
-	//
+	// Crawl
 	logger.Info(ctx, "Starting Github star crawler")
 	handler := NewHandler(crawler, logger)
 	if handler.Crawler.Crawl() {

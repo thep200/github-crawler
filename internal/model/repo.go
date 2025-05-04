@@ -10,8 +10,8 @@ import (
 
 type Repo struct {
 	Model
-	ID         int    `json:"id" gorm:"column:id;primaryKey;autoIncrement:false"` // Use GitHub's ID as primary key
-	User       string `json:"user" gorm:"column:user;type:varchar(255);not null"` // Owner's login name
+	ID         int    `json:"id" gorm:"column:id;primaryKey;autoIncrement:false"`
+	User       string `json:"user" gorm:"column:user;type:varchar(255);not null"`
 	Name       string `json:"name" gorm:"column:name;type:varchar(255);not null"`
 	StarCount  int    `json:"star_count" gorm:"column:star_count;default:0"`
 	ForkCount  int    `json:"fork_count" gorm:"column:fork_count;default:0"`
@@ -36,12 +36,14 @@ func (r *Repo) TableName() string {
 
 func (r *Repo) Create(user string, name string, starCount, forkCount, watchCount, issueCount int) error {
 	ctx := context.Background()
-	// Cắt nội dung để tránh lỗi "data too long"
-	user = TruncateString(user, 250) // Dự phòng cho varchar(255)
-	name = TruncateString(name, 250) // Dự phòng cho varchar(255)
+	user = TruncateString(user, 250)
+	name = TruncateString(name, 250)
 
-	r.Logger.Info(ctx, "Creating repo with user=%s, name=%s, stars=%d, forks=%d, watches=%d, issues=%d",
-		user, name, starCount, forkCount, watchCount, issueCount)
+	r.Logger.Info(
+		ctx,
+		"Creating repo with user=%s, name=%s, stars=%d, forks=%d, watches=%d, issues=%d",
+		user, name, starCount, forkCount, watchCount, issueCount,
+	)
 
 	newRepo := &Repo{}
 	newRepo.User = user
