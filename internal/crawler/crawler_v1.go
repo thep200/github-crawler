@@ -109,19 +109,6 @@ func (c *CrawlerV1) Crawl() bool {
 		return false
 	}
 
-	//
-	tx := db.Begin()
-	if tx.Error != nil {
-		return false
-	}
-
-	//
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
-
 	page := 1
 	totalRepos := 0
 	skippedRepos := 0
@@ -150,7 +137,6 @@ func (c *CrawlerV1) Crawl() bool {
 				time.Sleep(5 * time.Second)
 				continue
 			}
-			tx.Rollback()
 			c.Logger.Error(ctx, "Cannot call GitHub API: %v", err)
 			return false
 		}
@@ -171,25 +157,16 @@ func (c *CrawlerV1) Crawl() bool {
 			if totalRepos >= maxRepos {
 				break
 			}
-			repoModel, isSkipped, err := c.crawlRepo(tx, repo)
+			repoModel, isSkipped, err := c.crawlRepo(db, repo)
 			if err != nil {
-				tx.Rollback()
-				return false
+				c.Logger.Error(ctx, "Error crawling repo: %v", err)
+				continue
 			}
 			if isSkipped {
 				skippedRepos++
 				continue
 			}
 			totalRepos++
-			if totalRepos > 0 {
-				if err := tx.Commit().Error; err != nil {
-					return false
-				}
-				tx = db.Begin()
-				if tx.Error != nil {
-					return false
-				}
-			}
 
 			//
 			user := repo.Owner.Login
@@ -202,7 +179,7 @@ func (c *CrawlerV1) Crawl() bool {
 			}
 
 			//
-			_, releasesCount, commitsCount, err := c.crawlReleases(ctx, tx, apiCaller, user, repoName, repoModel.ID)
+			_, releasesCount, commitsCount, err := c.crawlReleases(ctx, db, apiCaller, user, repoName, repoModel.ID)
 			if err != nil {
 				continue
 			}
@@ -212,24 +189,6 @@ func (c *CrawlerV1) Crawl() bool {
 		}
 
 		page++
-
-		//
-		if err := tx.Commit().Error; err != nil {
-			return false
-		}
-
-		//
-		tx = db.Begin()
-		if tx.Error != nil {
-			return false
-		}
-	}
-
-	// Final commit
-	if tx != nil {
-		if err := tx.Commit().Error; err != nil {
-			return false
-		}
 	}
 
 	// Log results
@@ -238,7 +197,7 @@ func (c *CrawlerV1) Crawl() bool {
 	return true
 }
 
-func (c *CrawlerV1) crawlRepo(tx *gorm.DB, repo githubapi.GithubAPIResponse) (*model.Repo, bool, error) {
+func (c *CrawlerV1) crawlRepo(db *gorm.DB, repo githubapi.GithubAPIResponse) (*model.Repo, bool, error) {
 	// Extract username and repo name
 	user := repo.Owner.Login
 	repoName := repo.Name
@@ -270,7 +229,25 @@ func (c *CrawlerV1) crawlRepo(tx *gorm.DB, repo githubapi.GithubAPIResponse) (*m
 		},
 	}
 
+	// Start a transaction for this repository
+	tx := db.Begin()
+	if tx.Error != nil {
+		return nil, false, tx.Error
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
 	if err := tx.Create(repoModel).Error; err != nil {
+		tx.Rollback()
+		return nil, false, err
+	}
+
+	// Commit immediately after creating the repository
+	if err := tx.Commit().Error; err != nil {
 		return nil, false, err
 	}
 
@@ -280,7 +257,7 @@ func (c *CrawlerV1) crawlRepo(tx *gorm.DB, repo githubapi.GithubAPIResponse) (*m
 	return repoModel, false, nil
 }
 
-func (c *CrawlerV1) crawlReleases(ctx context.Context, tx *gorm.DB, apiCaller *githubapi.Caller, user, repoName string, repoID int) ([]githubapi.ReleaseResponse, int, int, error) {
+func (c *CrawlerV1) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *githubapi.Caller, user, repoName string, repoID int) ([]githubapi.ReleaseResponse, int, int, error) {
 	c.applyRateLimit()
 
 	// Call API to get releases
@@ -302,26 +279,28 @@ func (c *CrawlerV1) crawlReleases(ctx context.Context, tx *gorm.DB, apiCaller *g
 
 	// Process each release
 	for _, release := range releases {
-		releaseModel, err := c.crawlRelease(tx, release, user, repoName, repoID)
+		releaseModel, err := c.crawlRelease(db, release, user, repoName, repoID)
 		if err != nil {
 			continue
 		}
 
-		releasesCount++
+		if releaseModel != nil {
+			releasesCount++
 
-		// Process commits for this release
-		_, count, err := c.crawlCommits(tx, apiCaller, user, repoName, releaseModel.ID)
-		if err != nil {
-			continue
+			// Process commits for this release
+			_, count, err := c.crawlCommits(db, apiCaller, user, repoName, releaseModel.ID)
+			if err != nil {
+				continue
+			}
+
+			commitsCount += count
 		}
-
-		commitsCount += count
 	}
 
 	return releases, releasesCount, commitsCount, nil
 }
 
-func (c *CrawlerV1) crawlRelease(tx *gorm.DB, release githubapi.ReleaseResponse, user, repoName string, repoID int) (*model.Release, error) {
+func (c *CrawlerV1) crawlRelease(db *gorm.DB, release githubapi.ReleaseResponse, user, repoName string, repoID int) (*model.Release, error) {
 	releaseContent := release.Body
 	releaseName := release.Name
 	if releaseName == "" {
@@ -343,7 +322,25 @@ func (c *CrawlerV1) crawlRelease(tx *gorm.DB, release githubapi.ReleaseResponse,
 		},
 	}
 
+	// Start a transaction for this release
+	tx := db.Begin()
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
 	if err := tx.Create(releaseModel).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	// Commit immediately after creating the release
+	if err := tx.Commit().Error; err != nil {
 		return nil, err
 	}
 
@@ -353,7 +350,7 @@ func (c *CrawlerV1) crawlRelease(tx *gorm.DB, release githubapi.ReleaseResponse,
 	return releaseModel, nil
 }
 
-func (c *CrawlerV1) crawlCommits(tx *gorm.DB, apiCaller *githubapi.Caller, user, repoName string, releaseID int) ([]githubapi.CommitResponse, int, error) {
+func (c *CrawlerV1) crawlCommits(db *gorm.DB, apiCaller *githubapi.Caller, user, repoName string, releaseID int) ([]githubapi.CommitResponse, int, error) {
 	c.applyRateLimit()
 
 	// Call API to get commits
@@ -374,7 +371,7 @@ func (c *CrawlerV1) crawlCommits(tx *gorm.DB, apiCaller *githubapi.Caller, user,
 
 	// Process each commit
 	for _, commit := range commits {
-		if err := c.saveCommit(tx, commit, releaseID); err != nil {
+		if err := c.saveCommit(db, commit, releaseID); err != nil {
 			if !strings.Contains(err.Error(), "Duplicate entry") {
 				return commits, commitsCount, err
 			}
@@ -387,7 +384,7 @@ func (c *CrawlerV1) crawlCommits(tx *gorm.DB, apiCaller *githubapi.Caller, user,
 	return commits, commitsCount, nil
 }
 
-func (c *CrawlerV1) saveCommit(tx *gorm.DB, commit githubapi.CommitResponse, releaseID int) error {
+func (c *CrawlerV1) saveCommit(db *gorm.DB, commit githubapi.CommitResponse, releaseID int) error {
 	hashValue := model.TruncateString(commit.SHA, 250)
 
 	//
@@ -408,8 +405,21 @@ func (c *CrawlerV1) saveCommit(tx *gorm.DB, commit githubapi.CommitResponse, rel
 		},
 	}
 
+	// Start a transaction for this commit
+	tx := db.Begin()
+	if tx.Error != nil {
+		return tx.Error
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
 	err := tx.Create(commitModel).Error
 	if err != nil {
+		tx.Rollback()
 		if !strings.Contains(err.Error(), "Duplicate entry") {
 			return err
 		}
@@ -417,6 +427,11 @@ func (c *CrawlerV1) saveCommit(tx *gorm.DB, commit githubapi.CommitResponse, rel
 		//
 		c.addProcessedCommit(hashValue)
 		return nil
+	}
+
+	// Commit immediately after creating the commit
+	if err := tx.Commit().Error; err != nil {
+		return err
 	}
 
 	//
