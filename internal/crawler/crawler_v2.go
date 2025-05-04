@@ -56,10 +56,10 @@ func NewCrawlerV2(logger log.Logger, config *cfg.Config, mysql *db.Mysql) (*Craw
 	rateLimiter := limiter.NewRateLimiter(config.GithubApi.RequestsPerSecond)
 
 	//
-	maxRepoWorkers := 5
-	maxReleaseWorkers := 10
-	maxCommitWorkers := 20
-	maxPageWorkers := 10
+	maxRepoWorkers := 10    // Increased from 5
+	maxReleaseWorkers := 20 // Increased from 10
+	maxCommitWorkers := 30  // Increased from 20
+	maxPageWorkers := 15    // Increased from 10
 
 	return &CrawlerV2{
 		Logger:                logger,
@@ -69,20 +69,20 @@ func NewCrawlerV2(logger log.Logger, config *cfg.Config, mysql *db.Mysql) (*Craw
 		ReleaseMd:             releaseMd,
 		CommitMd:              commitMd,
 		rateLimiter:           rateLimiter,
-		processedRepoIDs:      make(map[int64]bool, 5000),
-		processedReleaseKeys:  make(map[string]bool, 10000),
-		processedCommitHashes: make(map[string]bool, 20000),
+		processedRepoIDs:      make(map[int64]bool, 10000),  // Increased capacity
+		processedReleaseKeys:  make(map[string]bool, 20000), // Increased capacity
+		processedCommitHashes: make(map[string]bool, 40000), // Increased capacity
 		processedLock:         sync.RWMutex{},
 		repoWorkers:           make(chan struct{}, maxRepoWorkers),
 		releaseWorkers:        make(chan struct{}, maxReleaseWorkers),
 		commitWorkers:         make(chan struct{}, maxCommitWorkers),
 		pageWorkers:           make(chan struct{}, maxPageWorkers),
-		errorChan:             make(chan error, 100),
+		errorChan:             make(chan error, 200), // Increased buffer size
 		backgroundWg:          sync.WaitGroup{},
 		repoCount:             0,
 		releaseCount:          0,
 		commitCount:           0,
-		maxRepos:              5000,
+		maxRepos:              10000, // Increased from 5000
 	}, nil
 }
 
@@ -262,11 +262,30 @@ func (c *CrawlerV2) crawlPage(ctx context.Context, db *gorm.DB, page, perPage in
 }
 
 func (c *CrawlerV2) crawlReleasesAndCommitsAsync(ctx context.Context, db *gorm.DB, user, repoName string, repoID int) {
+	//
+	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	defer cancel()
+
+	//
 	apiCaller := githubapi.NewCaller(c.Logger, c.Config, 1, 100)
-	_, err := c.crawlReleases(ctx, db, apiCaller, user, repoName, repoID)
-	if err != nil {
-		c.Logger.Warn(ctx, "Lỗi khi crawl releases cho %s/%s: %v", user, repoName, err)
-	}
+
+	//
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	//
+	go func() {
+		defer wg.Done()
+		releases, err := c.crawlReleases(timeoutCtx, db, apiCaller, user, repoName, repoID)
+		if err != nil {
+			c.Logger.Warn(timeoutCtx, "Lỗi khi crawl releases cho %s/%s: %v", user, repoName, err)
+		} else {
+			c.Logger.Info(timeoutCtx, "Đã crawl %d releases cho %s/%s", len(releases), user, repoName)
+		}
+	}()
+
+	//
+	wg.Wait()
 }
 
 func (c *CrawlerV2) errorMonitor(ctx context.Context) {

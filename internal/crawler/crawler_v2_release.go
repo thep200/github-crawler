@@ -36,22 +36,28 @@ func (c *CrawlerV2) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *g
 	}
 
 	c.Logger.Info(ctx, "Đã tìm thấy %d releases cho repo %s/%s", len(releases), user, repoName)
+
 	//
+	releaseErrChan := make(chan error, len(releases))
 	var wg sync.WaitGroup
 
-	// Context có thể hủy để quản lý các goroutines
+	//
 	releaseCtx, cancelRelease := context.WithCancel(ctx)
 	defer cancelRelease()
 
-	// Xử lý releases song song với giới hạn đồng thời
-	for _, release := range releases {
+	//
+	commitSemaphore := make(chan struct{}, 5)
+
+	//
+	for i := range releases {
+		release := releases[i]
 		if c.isReleaseProcessed(repoID, release.Name) {
 			continue
 		}
 
-		//
 		select {
 		case <-releaseCtx.Done():
+			return releases, ctx.Err()
 		case c.releaseWorkers <- struct{}{}:
 			wg.Add(1)
 			go func(release githubapi.ReleaseResponse) {
@@ -61,51 +67,70 @@ func (c *CrawlerV2) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *g
 				// Tạo transaction mới cho mỗi release
 				releaseTx := db.Begin()
 				if releaseTx.Error != nil {
-					c.errorChan <- releaseTx.Error
+					releaseErrChan <- releaseTx.Error
 					return
 				}
 
 				defer func() {
 					if r := recover(); r != nil {
 						releaseTx.Rollback()
-						c.errorChan <- fmt.Errorf("panic xảy ra trong goroutine xử lý release: %v", r)
+						releaseErrChan <- fmt.Errorf("panic xảy ra trong goroutine xử lý release: %v", r)
 					}
 				}()
 
-				// Lưu release và các commit liên quan
+				// Lưu release
 				releaseModel := &model.Release{
 					Content: model.TruncateString(release.Body, 65000),
 					RepoID:  repoID,
-					// Name:    model.TruncateString(release.Name, 250), // Thêm trường Name
 					Model: model.Model{
 						Config: c.Config,
 						Logger: c.Logger,
 						Mysql:  c.Mysql,
 					},
 				}
+
 				if err := releaseTx.Create(releaseModel).Error; err != nil {
 					releaseTx.Rollback()
 					if !strings.Contains(err.Error(), "Duplicate entry") {
-						c.errorChan <- err
+						releaseErrChan <- err
 					}
 					return
 				}
+
 				if err := releaseTx.Commit().Error; err != nil {
-					c.errorChan <- err
+					releaseErrChan <- err
 					return
 				}
 
-				// Tăng số lượng releases đã xử lý
+				//
 				atomic.AddInt32(&c.releaseCount, 1)
-
 				c.addProcessedRelease(repoID, release.Name)
-				c.crawlCommits(releaseCtx, db, apiCaller, user, repoName, releaseModel.ID)
+
+				//
+				select {
+				case commitSemaphore <- struct{}{}:
+					go func() {
+						defer func() { <-commitSemaphore }()
+						_, err := c.crawlCommits(releaseCtx, db, apiCaller, user, repoName, releaseModel.ID)
+						if err != nil {
+							c.Logger.Warn(ctx, "Lỗi khi crawl commits cho release %s: %v", release.Name, err)
+						}
+					}()
+				default:
+					c.crawlCommits(releaseCtx, db, apiCaller, user, repoName, releaseModel.ID)
+				}
 			}(release)
 		}
 	}
 
-	// Đợi tất cả releases được xử lý
+	//
 	wg.Wait()
 
-	return releases, nil
+	//
+	select {
+	case err := <-releaseErrChan:
+		return releases, err
+	default:
+		return releases, nil
+	}
 }
