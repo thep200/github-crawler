@@ -40,7 +40,13 @@ func main() {
 	commitMd, _ := model.NewCommit(config, logger, mysql)
 	repoMd, _ := model.NewRepo(config, logger, mysql)
 	releaseMd, _ := model.NewRelease(config, logger, mysql)
-	crawler, _ := crawler.FactoryCrawler("v1", logger, config, mysql)
+
+	// Crawler
+	crawler, err := crawler.FactoryCrawler(*version, logger, config, mysql)
+	if err != nil {
+		logger.Error(ctx, "Failed to create crawler")
+		return
+	}
 
 	// Migrate database
 	mysql.Migrate(commitMd, repoMd, releaseMd)
