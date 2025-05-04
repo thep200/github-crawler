@@ -5,6 +5,7 @@ package crawler
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -19,15 +20,17 @@ import (
 )
 
 type CrawlerV1 struct {
-	Logger        log.Logger
-	Config        *cfg.Config
-	Mysql         *db.Mysql
-	RepoMd        *model.Repo
-	ReleaseMd     *model.Release
-	CommitMd      *model.Commit
-	rateLimiter   *limiter.RateLimiter
-	processedIDs  []int64
-	processedLock sync.RWMutex
+	Logger                log.Logger
+	Config                *cfg.Config
+	Mysql                 *db.Mysql
+	RepoMd                *model.Repo
+	ReleaseMd             *model.Release
+	CommitMd              *model.Commit
+	rateLimiter           *limiter.RateLimiter
+	processedRepoIDs      map[int64]bool
+	processedReleaseKeys  map[string]bool // key format: "repoID_name"
+	processedCommitHashes map[string]bool
+	processedLock         sync.RWMutex
 }
 
 func NewCrawlerV1(logger log.Logger, config *cfg.Config, mysql *db.Mysql) (*CrawlerV1, error) {
@@ -36,36 +39,62 @@ func NewCrawlerV1(logger log.Logger, config *cfg.Config, mysql *db.Mysql) (*Craw
 	commitMd, _ := model.NewCommit(config, logger, mysql)
 	rateLimiter := limiter.NewRateLimiter(config.GithubApi.RequestsPerSecond)
 	return &CrawlerV1{
-		Logger:        logger,
-		Config:        config,
-		Mysql:         mysql,
-		RepoMd:        repoMd,
-		ReleaseMd:     releaseMd,
-		CommitMd:      commitMd,
-		rateLimiter:   rateLimiter,
-		processedIDs:  make([]int64, 0, 5000),
-		processedLock: sync.RWMutex{},
+		Logger:                logger,
+		Config:                config,
+		Mysql:                 mysql,
+		RepoMd:                repoMd,
+		ReleaseMd:             releaseMd,
+		CommitMd:              commitMd,
+		rateLimiter:           rateLimiter,
+		processedRepoIDs:      make(map[int64]bool, 5000),
+		processedReleaseKeys:  make(map[string]bool, 10000),
+		processedCommitHashes: make(map[string]bool, 20000),
+		processedLock:         sync.RWMutex{},
 	}, nil
 }
 
-//
+// Check if a repository has been processed
 func (c *CrawlerV1) isProcessed(repoID int64) bool {
 	c.processedLock.RLock()
 	defer c.processedLock.RUnlock()
-
-	for _, id := range c.processedIDs {
-		if id == repoID {
-			return true
-		}
-	}
-	return false
+	return c.processedRepoIDs[repoID]
 }
 
-//
+// Add a processed repository ID to the tracking map
 func (c *CrawlerV1) addProcessedID(repoID int64) {
 	c.processedLock.Lock()
 	defer c.processedLock.Unlock()
-	c.processedIDs = append(c.processedIDs, repoID)
+	c.processedRepoIDs[repoID] = true
+}
+
+// Check if a release has been processed
+func (c *CrawlerV1) isReleaseProcessed(repoID int, releaseName string) bool {
+	key := fmt.Sprintf("%d_%s", repoID, releaseName)
+	c.processedLock.RLock()
+	defer c.processedLock.RUnlock()
+	return c.processedReleaseKeys[key]
+}
+
+// Add a processed release to the tracking map
+func (c *CrawlerV1) addProcessedRelease(repoID int, releaseName string) {
+	key := fmt.Sprintf("%d_%s", repoID, releaseName)
+	c.processedLock.Lock()
+	defer c.processedLock.Unlock()
+	c.processedReleaseKeys[key] = true
+}
+
+// Check if a commit has been processed
+func (c *CrawlerV1) isCommitProcessed(commitHash string) bool {
+	c.processedLock.RLock()
+	defer c.processedLock.RUnlock()
+	return c.processedCommitHashes[commitHash]
+}
+
+// Add a processed commit to the tracking map
+func (c *CrawlerV1) addProcessedCommit(commitHash string) {
+	c.processedLock.Lock()
+	defer c.processedLock.Unlock()
+	c.processedCommitHashes[commitHash] = true
 }
 
 func (c *CrawlerV1) Crawl() bool {
@@ -152,7 +181,7 @@ func (c *CrawlerV1) Crawl() bool {
 				continue
 			}
 			totalRepos++
-			if totalRepos > 0 && totalRepos%10 == 0 {
+			if totalRepos > 0 {
 				if err := tx.Commit().Error; err != nil {
 					return false
 				}
@@ -245,7 +274,7 @@ func (c *CrawlerV1) crawlRepo(tx *gorm.DB, repo githubapi.GithubAPIResponse) (*m
 		return nil, false, err
 	}
 
-	// Add newly processed ID to our in-memory list
+	//
 	c.addProcessedID(repo.Id)
 
 	return repoModel, false, nil
@@ -294,6 +323,16 @@ func (c *CrawlerV1) crawlReleases(ctx context.Context, tx *gorm.DB, apiCaller *g
 
 func (c *CrawlerV1) crawlRelease(tx *gorm.DB, release githubapi.ReleaseResponse, user, repoName string, repoID int) (*model.Release, error) {
 	releaseContent := release.Body
+	releaseName := release.Name
+	if releaseName == "" {
+		releaseName = release.TagName
+	}
+
+	// Skip if this release has already been processed
+	if c.isReleaseProcessed(repoID, releaseName) {
+		return nil, nil
+	}
+
 	releaseModel := &model.Release{
 		Content: model.TruncateString(releaseContent, 65000),
 		RepoID:  repoID,
@@ -307,6 +346,9 @@ func (c *CrawlerV1) crawlRelease(tx *gorm.DB, release githubapi.ReleaseResponse,
 	if err := tx.Create(releaseModel).Error; err != nil {
 		return nil, err
 	}
+
+	// Mark release as processed
+	c.addProcessedRelease(repoID, releaseName)
 
 	return releaseModel, nil
 }
@@ -347,6 +389,12 @@ func (c *CrawlerV1) crawlCommits(tx *gorm.DB, apiCaller *githubapi.Caller, user,
 
 func (c *CrawlerV1) saveCommit(tx *gorm.DB, commit githubapi.CommitResponse, releaseID int) error {
 	hashValue := model.TruncateString(commit.SHA, 250)
+
+	//
+	if c.isCommitProcessed(hashValue) {
+		return nil
+	}
+
 	messageValue := model.TruncateString(commit.Commit.Message, 65000)
 
 	commitModel := &model.Commit{
@@ -360,7 +408,20 @@ func (c *CrawlerV1) saveCommit(tx *gorm.DB, commit githubapi.CommitResponse, rel
 		},
 	}
 
-	return tx.Create(commitModel).Error
+	err := tx.Create(commitModel).Error
+	if err != nil {
+		if !strings.Contains(err.Error(), "Duplicate entry") {
+			return err
+		}
+
+		//
+		c.addProcessedCommit(hashValue)
+		return nil
+	}
+
+	//
+	c.addProcessedCommit(hashValue)
+	return nil
 }
 
 func (c *CrawlerV1) applyRateLimit() {

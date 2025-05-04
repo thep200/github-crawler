@@ -6,7 +6,7 @@ Project này crawl thông tin (name, start, ...) của các repository được 
 
 *   `go mod vendor`
 *   `go mod tidy`
-*   `go run cmd/run/main`
+*   `go run cmd/run/main -version=v1`
 
 ## Pre-condition
 
@@ -17,7 +17,7 @@ Cần crawl đủ 5000 repository của github có số sao cao nhất. Các th�
 Rate limiting của github:
 *   10 requests / 1 minute (nếu không có token)
 *   30 requests / 1 minute (nếu có token)
-*   Chỉ lấy được 1000 kết quả trên mỗi truy vấn
+*   Chỉ lấy được tối đa 1000 kết quả trên mỗi truy vấn
 
 ![No token got rate limiting](imgs/no-token-got-rate.png)
 
@@ -37,88 +37,85 @@ Github APIs
 
 Crawl thông qua API search repository của github. Crawler tuần tự từng request cho tới khi hết rate limit hoặc đã crawl đủ 5000 repo có số sao cao nhất.
 
-/*
-Tài liệu kỹ thuật cho GitHub Crawler Phiên bản 1
+```mermaid
+sequenceDiagram
+    participant Client
+    participant CrawlerV1
+    participant GitHubAPI
+    participant Database
 
-1. Tổng quan
+    Client->>CrawlerV1: Crawl()
+    activate CrawlerV1
 
-GitHub Crawler là một công cụ được thiết kế để thu thập và lưu trữ thông tin về các repository trên GitHub.
-Công cụ này sử dụng GitHub Search API để tìm kiếm các repository phổ biến nhất dựa trên số lượng sao (stars).
+    CrawlerV1->>Database: Begin Transaction
+    activate Database
 
-2. Kiến trúc
+    loop Until maxRepos reached or API limit hit
+        CrawlerV1->>CrawlerV1: applyRateLimit()
+        CrawlerV1->>GitHubAPI: Call() - Get Repositories
+        activate GitHubAPI
+        GitHubAPI-->>CrawlerV1: Return Repositories
+        deactivate GitHubAPI
 
-Crawler được xây dựng với cấu trúc module rõ ràng:
-- github_api: Module gọi API GitHub và xử lý phản hồi
-- model: Module định nghĩa cấu trúc dữ liệu và tương tác với database
-- crawler: Module chính quản lý quy trình thu thập dữ liệu
+        loop For each repository
+            CrawlerV1->>CrawlerV1: crawlRepo(tx, repo)
+            alt Not already processed
+                CrawlerV1->>Database: Create Repository record
+                CrawlerV1->>CrawlerV1: Add to processedRepoIDs
 
-3. Quy trình thu thập dữ liệu
+                CrawlerV1->>CrawlerV1: crawlReleases(ctx, tx, apiCaller, user, repoName, repoID)
+                CrawlerV1->>CrawlerV1: applyRateLimit()
+                CrawlerV1->>GitHubAPI: CallReleases(user, repoName)
+                activate GitHubAPI
+                GitHubAPI-->>CrawlerV1: Return Releases
+                deactivate GitHubAPI
 
-3.1 Gọi GitHub Search API
-- Crawler gọi API theo trang (pagination) để lấy danh sách repository
-- Mỗi trang có thể chứa tối đa 100 mục (giới hạn của GitHub API)
-- API endpoint được cấu hình qua tệp cấu hình (mặc định là repos được sắp xếp theo stars)
+                loop For each release
+                    CrawlerV1->>CrawlerV1: crawlRelease(tx, release, user, repoName, repoID)
+                    alt Not already processed
+                        CrawlerV1->>Database: Create Release record
+                        CrawlerV1->>CrawlerV1: Add to processedReleaseKeys
 
-3.2 Xử lý phản hồi API
-- Phân tích thông tin cơ bản: ID, tên, chủ sở hữu
-- Thu thập các số liệu: số sao, số lượt fork, số lượt xem, số vấn đề mở
+                        CrawlerV1->>CrawlerV1: crawlCommits(tx, apiCaller, user, repoName, releaseID)
+                        CrawlerV1->>CrawlerV1: applyRateLimit()
+                        CrawlerV1->>GitHubAPI: CallCommits(user, repoName)
+                        activate GitHubAPI
+                        GitHubAPI-->>CrawlerV1: Return Commits
+                        deactivate GitHubAPI
 
-3.3 Lưu trữ dữ liệu
-- Dữ liệu được lưu vào ba bảng chính: repos, releases, và commits
-- Sử dụng giao dịch (transaction) để đảm bảo tính nhất quán dữ liệu
-- Kiểm tra sự tồn tại trước khi chèn để tránh trùng lặp
+                        loop For each commit
+                            CrawlerV1->>CrawlerV1: saveCommit(tx, commit, releaseID)
+                            alt Not already processed
+                                CrawlerV1->>Database: Create Commit record
+                                CrawlerV1->>CrawlerV1: Add to processedCommitHashes
+                            end
+                        end
+                    end
+                end
 
-4. Các giới hạn kỹ thuật
+                Note over CrawlerV1: Commit transaction
+                CrawlerV1->>Database: Commit & Begin new transaction
+            else Repository already processed
+                CrawlerV1->>CrawlerV1: Skip repository (increment skippedRepos)
+            end
+        end
 
-4.1 Giới hạn GitHub API
-- Giới hạn tìm kiếm: GitHub API chỉ trả về tối đa 1000 kết quả cho mỗi truy vấn tìm kiếm
-- Giới hạn tốc độ:
-  * 60 yêu cầu/giờ cho người dùng không xác thực
-  * 5000 yêu cầu/giờ cho người dùng đã xác thực
-- Crawler có cơ chế đợi và thử lại khi đạt giới hạn tốc độ
+        CrawlerV1->>CrawlerV1: Increment page number
+    end
 
-4.2 Xử lý lỗi
-- Xử lý lỗi kết nối mạng
-- Xử lý giới hạn tốc độ API và thử lại
-- Hoàn tác (rollback) giao dịch cơ sở dữ liệu nếu xảy ra lỗi
+    CrawlerV1->>Database: Final Commit Transaction
+    deactivate Database
 
-5. Tối ưu hóa hiệu suất
-
-- Số lượng mục tối đa trên mỗi trang: 100 (giới hạn của GitHub API)
-- Commit sớm: Thực hiện commit sau mỗi 5 trang để tránh giao dịch dài
-- Độ trễ động: Điều chỉnh độ trễ giữa các yêu cầu dựa trên trạng thái xác thực
-- Phát hiện kết thúc dữ liệu: Dừng khi nhận nhiều trang trống liên tiếp
-
-6. Hướng dẫn sử dụng
-
-- Cấu hình API URL trong tệp cấu hình để thay đổi tiêu chí tìm kiếm
-- Cung cấp GitHub API token (nếu có) để tăng giới hạn tốc độ
-- Chạy ứng dụng từ main.go
-
-7. Cải tiến trong tương lai
-
-- Hỗ trợ nhiều loại query tìm kiếm
-- Thu thập thông tin chi tiết hơn (READMEs, languages, contributors)
-- Cơ chế cập nhật thông tin repository theo định kỳ
-- Tăng khả năng chịu lỗi và cơ chế phục hồi
-*/
+    CrawlerV1->>CrawlerV1: logCrawlResults(...)
+    CrawlerV1-->>Client: Return Success/Failure
+    deactivate CrawlerV1
+```
 
 ### V2
 
-Cải tiến
-*   Thêm các worker để xử lý bất đồng bộ thay vì xử lý tuần tự (chú ý rate limiting)
-
 ### V3
 
-Cải tiến
-*   Concurrency
-*   Auto scale woker, comsumer
-
-
 ## Compare
-
-Chú ý so sánh các các lựa chọn thực hiện. Ví dụ: Tại sao lại chọn token thay vì proxy?, các technical để vượt qua rate limiting (proxy hay thêm các token)?. Các kỹ thuật xử lý rate limiting.
-
 
 ## Run command and access via `http://localhost:6060/pkg/prepuld/?m=all`
 
