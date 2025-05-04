@@ -293,6 +293,105 @@ sequenceDiagram
 
 ### Version 2
 
+Crawler version 2
+*   Crawl bất đồng bộ sử dụng nhiều worker
+*   Semaphore để kiểm soát và giới hạn API
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant CrawlerV2
+    participant ErrorMonitor
+    participant WorkerPools
+    participant GitHubAPI
+    participant Database
+
+    Client->>CrawlerV2: Crawl()
+    activate CrawlerV2
+
+    CrawlerV2->>ErrorMonitor: Start error monitoring
+    activate ErrorMonitor
+
+    CrawlerV2->>WorkerPools: Initialize (repo, release, commit, page workers)
+
+    par Process multiple pages concurrently
+        loop Each page worker (maxPageWorkers=15)
+            CrawlerV2->>CrawlerV2: Get next page number
+            CrawlerV2->>CrawlerV2: applyRateLimit()
+            CrawlerV2->>GitHubAPI: Call() - Get Repositories
+            activate GitHubAPI
+            GitHubAPI-->>CrawlerV2: Return Repositories
+            deactivate GitHubAPI
+
+            par Process repositories concurrently
+                loop For each repository (maxRepoWorkers=10)
+                    CrawlerV2->>CrawlerV2: crawlRepo()
+                    alt Not already processed
+                        CrawlerV2->>Database: Begin Transaction
+                        activate Database
+                        CrawlerV2->>Database: Create Repository record
+                        CrawlerV2->>Database: Commit Transaction
+                        deactivate Database
+                        CrawlerV2->>CrawlerV2: Add to processedRepoIDs
+
+                        par Process releases concurrently (in background)
+                            CrawlerV2->>CrawlerV2: crawlReleasesAndCommitsAsync()
+                            activate CrawlerV2
+                            CrawlerV2->>CrawlerV2: applyRateLimit()
+                            CrawlerV2->>GitHubAPI: CallReleases()
+                            activate GitHubAPI
+                            GitHubAPI-->>CrawlerV2: Return Releases
+                            deactivate GitHubAPI
+
+                            par Process releases concurrently
+                                loop For each release (maxReleaseWorkers=20)
+                                    alt Not already processed
+                                        CrawlerV2->>Database: Begin Transaction
+                                        activate Database
+                                        CrawlerV2->>Database: Create Release record
+                                        CrawlerV2->>Database: Commit Transaction
+                                        deactivate Database
+                                        CrawlerV2->>CrawlerV2: Add to processedReleaseKeys
+
+                                        par Process commits concurrently
+                                            CrawlerV2->>CrawlerV2: applyRateLimit()
+                                            CrawlerV2->>GitHubAPI: CallCommits()
+                                            activate GitHubAPI
+                                            GitHubAPI-->>CrawlerV2: Return Commits
+                                            deactivate GitHubAPI
+
+                                            loop For each commit (maxCommitWorkers=30)
+                                                alt Not already processed
+                                                    CrawlerV2->>Database: Begin Transaction
+                                                    activate Database
+                                                    CrawlerV2->>Database: Create Commit record
+                                                    CrawlerV2->>Database: Commit Transaction
+                                                    deactivate Database
+                                                    CrawlerV2->>CrawlerV2: Add to processedCommitHashes
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                            deactivate CrawlerV2
+                        end
+                    else Repository already processed
+                        CrawlerV2->>CrawlerV2: Skip repository
+                    end
+                end
+            end
+        end
+    end
+
+    CrawlerV2->>CrawlerV2: Wait for all background tasks
+    CrawlerV2->>ErrorMonitor: Stop error monitoring
+    deactivate ErrorMonitor
+    CrawlerV2->>CrawlerV2: logCrawlResults()
+    CrawlerV2-->>Client: Return Success/Failure
+    deactivate CrawlerV2
+```
+
 ### Version 3
 
 ## Compare
