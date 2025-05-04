@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/thep200/github-crawler/cfg"
@@ -38,6 +39,14 @@ type CrawlerV2 struct {
 	commitWorkers  chan struct{}
 	errorChan      chan error
 	backgroundWg   sync.WaitGroup
+
+	// Counters for tracking progress
+	repoCount     int32
+	releaseCount  int32
+	commitCount   int32
+	maxRepos      int32
+	pageWorkers   chan struct{}
+	pageWaitGroup sync.WaitGroup
 }
 
 func NewCrawlerV2(logger log.Logger, config *cfg.Config, mysql *db.Mysql) (*CrawlerV2, error) {
@@ -50,6 +59,7 @@ func NewCrawlerV2(logger log.Logger, config *cfg.Config, mysql *db.Mysql) (*Craw
 	maxRepoWorkers := 5
 	maxReleaseWorkers := 10
 	maxCommitWorkers := 20
+	maxPageWorkers := 10
 
 	return &CrawlerV2{
 		Logger:                logger,
@@ -66,8 +76,13 @@ func NewCrawlerV2(logger log.Logger, config *cfg.Config, mysql *db.Mysql) (*Craw
 		repoWorkers:           make(chan struct{}, maxRepoWorkers),
 		releaseWorkers:        make(chan struct{}, maxReleaseWorkers),
 		commitWorkers:         make(chan struct{}, maxCommitWorkers),
-		errorChan:             make(chan error, 100), // Kênh lớn để tránh blocking
+		pageWorkers:           make(chan struct{}, maxPageWorkers),
+		errorChan:             make(chan error, 100),
 		backgroundWg:          sync.WaitGroup{},
+		repoCount:             0,
+		releaseCount:          0,
+		commitCount:           0,
+		maxRepos:              5000,
 	}, nil
 }
 
@@ -83,41 +98,25 @@ func (c *CrawlerV2) Crawl() bool {
 	//
 	go c.errorMonitor(crawlCtx)
 
-	// Connect to database
+	//
 	db, err := c.Mysql.Db()
 	if err != nil {
-		c.Logger.Error(ctx, "Cannot connect to database: %v", err)
 		return false
 	}
-
-	// Các biến theo dõi tiến trình
-	var (
-		page          = 1
-		totalRepos    = 0
-		maxRepos      = 5000
-		perPage       = 100
-		apiCaller     = githubapi.NewCaller(c.Logger, c.Config, page, perPage)
-		maxApiResults = 1000
-		counterLock   sync.Mutex
-		mainWg        sync.WaitGroup
-	)
 
 	//
 	doneCh := make(chan bool)
 
 	//
 	go func() {
-		defer close(doneCh)
 		for {
 			select {
 			case <-crawlCtx.Done():
+				close(doneCh)
 				return
 			default:
-				counterLock.Lock()
-				repoCount := totalRepos
-				counterLock.Unlock()
-				if repoCount >= maxRepos {
-					doneCh <- true
+				if atomic.LoadInt32(&c.repoCount) >= c.maxRepos {
+					close(doneCh)
 					return
 				}
 				time.Sleep(500 * time.Millisecond)
@@ -126,127 +125,140 @@ func (c *CrawlerV2) Crawl() bool {
 	}()
 
 	//
-	for totalRepos < maxRepos {
-		if page > maxApiResults/perPage {
-			break
-		}
+	maxConcurrentPages := 10
+	perPage := 100
 
-		//
-		c.applyRateLimit()
+	//
+	var startPage int32 = 1
+	for i := 0; i < maxConcurrentPages; i++ {
+		c.pageWaitGroup.Add(1)
+		go func(pageOffset int) {
+			defer c.pageWaitGroup.Done()
 
-		//
-		apiCaller.Page = page
-		apiCaller.PerPage = perPage
-
-		//
-		repos, err := apiCaller.Call()
-		if err != nil {
-			if c.isRateLimitError(err) {
-				time.Sleep(60 * time.Second)
-				continue
+			for {
+				currentPage := atomic.AddInt32(&startPage, 1)
+				select {
+				case <-doneCh:
+					return
+				case c.pageWorkers <- struct{}{}:
+					c.crawlPage(crawlCtx, db, int(currentPage), perPage, doneCh)
+					<-c.pageWorkers
+				}
 			}
-			c.Logger.Error(ctx, "Cannot call GitHub API: %v", err)
-			return false
-		}
-
-		//
-		if len(repos) == 0 {
-			page++
-			continue
-		}
-
-		//
-		for _, repo := range repos {
-			counterLock.Lock()
-			if totalRepos >= maxRepos {
-				counterLock.Unlock()
-				break
-			}
-			counterLock.Unlock()
-
-			// Semaphore
-			select {
-			case <-doneCh:
-			case c.repoWorkers <- struct{}{}:
-				mainWg.Add(1)
-				go func(repo githubapi.GithubAPIResponse) {
-					defer mainWg.Done()
-					defer func() { <-c.repoWorkers }()
-
-					//
-					repoTx := db.Begin()
-					if repoTx.Error != nil {
-						c.errorChan <- repoTx.Error
-						return
-					}
-
-					defer func() {
-						if r := recover(); r != nil {
-							repoTx.Rollback()
-							c.errorChan <- fmt.Errorf("panic xảy ra trong goroutine xử lý repo: %v", r)
-						}
-					}()
-
-					// Xử lý repo
-					repoModel, isSkipped, err := c.crawlRepo(repoTx, repo)
-					if err != nil {
-						repoTx.Rollback()
-						c.errorChan <- err
-						return
-					}
-
-					if isSkipped {
-						repoTx.Rollback()
-						return
-					}
-
-					//
-					if err := repoTx.Commit().Error; err != nil {
-						c.errorChan <- err
-						return
-					}
-
-					//
-					counterLock.Lock()
-					totalRepos++
-					counterLock.Unlock()
-
-					//
-					user := repo.Owner.Login
-					repoName := repo.Name
-					if user == "" {
-						user, repoName = extractUserAndRepo(repo.FullName)
-						if user == "" {
-							user = "unknown"
-						}
-					}
-
-					// Goroutine to rawl releases và commits
-					c.backgroundWg.Add(1)
-					go func() {
-						defer c.backgroundWg.Done()
-						releasesCtx := context.Background()
-						c.crawlReleasesAndCommitsAsync(releasesCtx, db, user, repoName, repoModel.ID)
-					}()
-				}(repo)
-			}
-		}
-
-		page++
-
-		//
-		select {
-		case <-doneCh:
-		default:
-		}
+		}(i)
 	}
 
 	//
-	mainWg.Wait()
-	c.Logger.Info(ctx, "Hoàn thành crawl repositories. Các goroutine thu thập releases và commits đang được xử lý...")
+	go func() {
+		c.pageWaitGroup.Wait()
+		c.backgroundWg.Wait()
+	}()
+
+	//
+	waitTime := 60 * time.Minute
+	time.Sleep(waitTime)
+
 	close(c.errorChan)
 	c.logCrawlResults(ctx, startTime)
 	return true
+}
+
+func (c *CrawlerV2) crawlPage(ctx context.Context, db *gorm.DB, page, perPage int, doneCh chan bool) {
+	//
+	c.applyRateLimit()
+
+	//
+	apiCaller := githubapi.NewCaller(c.Logger, c.Config, page, perPage)
+
+	//
+	repos, err := apiCaller.Call()
+	if err != nil {
+		if c.isRateLimitError(err) {
+			time.Sleep(60 * time.Second)
+			if _, err = apiCaller.Call(); err != nil {
+				return
+			}
+		}
+
+		return
+	}
+
+	//
+	if len(repos) == 0 {
+		return
+	}
+
+	//
+	for _, repo := range repos {
+		select {
+		case <-doneCh:
+			return
+		case c.repoWorkers <- struct{}{}:
+			if atomic.LoadInt32(&c.repoCount) >= c.maxRepos {
+				<-c.repoWorkers
+				return
+			}
+
+			//
+			go func(repo githubapi.GithubAPIResponse) {
+				defer func() { <-c.repoWorkers }()
+
+				// Bắt đầu transaction
+				repoTx := db.Begin()
+				if repoTx.Error != nil {
+					c.errorChan <- repoTx.Error
+					return
+				}
+
+				defer func() {
+					if r := recover(); r != nil {
+						repoTx.Rollback()
+						c.errorChan <- fmt.Errorf("panic xảy ra trong goroutine xử lý repo: %v", r)
+					}
+				}()
+
+				// Xử lý repo
+				repoModel, isSkipped, err := c.crawlRepo(repoTx, repo)
+				if err != nil {
+					repoTx.Rollback()
+					c.errorChan <- err
+					return
+				}
+
+				if isSkipped {
+					repoTx.Rollback()
+					return
+				}
+
+				// Commit transaction
+				if err := repoTx.Commit().Error; err != nil {
+					c.errorChan <- err
+					return
+				}
+
+				// Tăng counter
+				atomic.AddInt32(&c.repoCount, 1)
+
+				// Extract user và repo name
+				user := repo.Owner.Login
+				repoName := repo.Name
+				if user == "" {
+					user, repoName = extractUserAndRepo(repo.FullName)
+					if user == "" {
+						user = "unknown"
+					}
+				}
+
+				// Crawl releases và commits bất đồng bộ
+				c.backgroundWg.Add(1)
+				go func() {
+					defer c.backgroundWg.Done()
+					releasesCtx := context.Background()
+					c.crawlReleasesAndCommitsAsync(releasesCtx, db, user, repoName, repoModel.ID)
+				}()
+			}(repo)
+		}
+	}
 }
 
 func (c *CrawlerV2) crawlReleasesAndCommitsAsync(ctx context.Context, db *gorm.DB, user, repoName string, repoID int) {
@@ -334,7 +346,7 @@ func (c *CrawlerV2) isRateLimitError(err error) bool {
 		strings.Contains(err.Error(), "API rate limit exceeded")
 }
 
-// Ghi log kết quả crawl
+// Ghi log kết quả crawl với thông tin chi tiết hơn
 func (c *CrawlerV2) logCrawlResults(ctx context.Context, startTime time.Time) {
 	endTime := time.Now()
 	duration := endTime.Sub(startTime)
@@ -343,4 +355,7 @@ func (c *CrawlerV2) logCrawlResults(ctx context.Context, startTime time.Time) {
 	c.Logger.Info(ctx, "Thời gian bắt đầu: %s", startTime.Format(time.RFC3339))
 	c.Logger.Info(ctx, "Thời gian kết thúc: %s", endTime.Format(time.RFC3339))
 	c.Logger.Info(ctx, "Tổng thời gian thực hiện: %v", duration)
+	c.Logger.Info(ctx, "Số lượng repositories đã crawl: %d", atomic.LoadInt32(&c.repoCount))
+	c.Logger.Info(ctx, "Số lượng releases đã crawl: %d", atomic.LoadInt32(&c.releaseCount))
+	c.Logger.Info(ctx, "Số lượng commits đã crawl: %d", atomic.LoadInt32(&c.commitCount))
 }

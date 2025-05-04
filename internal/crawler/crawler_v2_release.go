@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	githubapi "github.com/thep200/github-crawler/internal/github_api"
@@ -34,6 +35,7 @@ func (c *CrawlerV2) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *g
 		return releases, nil
 	}
 
+	c.Logger.Info(ctx, "Đã tìm thấy %d releases cho repo %s/%s", len(releases), user, repoName)
 	//
 	var wg sync.WaitGroup
 
@@ -74,6 +76,7 @@ func (c *CrawlerV2) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *g
 				releaseModel := &model.Release{
 					Content: model.TruncateString(release.Body, 65000),
 					RepoID:  repoID,
+					// Name:    model.TruncateString(release.Name, 250), // Thêm trường Name
 					Model: model.Model{
 						Config: c.Config,
 						Logger: c.Logger,
@@ -91,6 +94,10 @@ func (c *CrawlerV2) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *g
 					c.errorChan <- err
 					return
 				}
+
+				// Tăng số lượng releases đã xử lý
+				atomic.AddInt32(&c.releaseCount, 1)
+
 				c.addProcessedRelease(repoID, release.Name)
 				c.crawlCommits(releaseCtx, db, apiCaller, user, repoName, releaseModel.ID)
 			}(release)

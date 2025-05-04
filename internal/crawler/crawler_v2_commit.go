@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	githubapi "github.com/thep200/github-crawler/internal/github_api"
@@ -20,7 +21,6 @@ func (c *CrawlerV2) crawlCommits(ctx context.Context, db *gorm.DB, apiCaller *gi
 	commits, err := apiCaller.CallCommits(user, repoName)
 	if err != nil {
 		if c.isRateLimitError(err) {
-			c.Logger.Info(ctx, "Rate limit đạt ngưỡng khi crawl commits, đợi 60 giây")
 			time.Sleep(60 * time.Second)
 			commits, err = apiCaller.CallCommits(user, repoName)
 			if err != nil {
@@ -58,18 +58,18 @@ func (c *CrawlerV2) crawlCommits(ctx context.Context, db *gorm.DB, apiCaller *gi
 
 				defer func() {
 					if r := recover(); r != nil {
-						c.errorChan <- fmt.Errorf("panic xảy ra trong goroutine xử lý commit: %v", r)
+						c.errorChan <- fmt.Errorf("failed to processed commit: %v", r)
 					}
 				}()
 
-				// Tạo transaction mới cho mỗi commit
+				//
 				commitTx := db.Begin()
 				if commitTx.Error != nil {
 					c.errorChan <- commitTx.Error
 					return
 				}
 
-				// Lưu commit
+				//
 				commitModel := &model.Commit{
 					Hash:      model.TruncateString(commit.SHA, 250),
 					Message:   model.TruncateString(commit.Commit.Message, 65000),
@@ -81,6 +81,7 @@ func (c *CrawlerV2) crawlCommits(ctx context.Context, db *gorm.DB, apiCaller *gi
 					},
 				}
 
+				//
 				if err := commitTx.Create(commitModel).Error; err != nil {
 					commitTx.Rollback()
 					if !strings.Contains(err.Error(), "Duplicate entry") {
@@ -89,11 +90,14 @@ func (c *CrawlerV2) crawlCommits(ctx context.Context, db *gorm.DB, apiCaller *gi
 					return
 				}
 
-				// Commit transaction
+				//
 				if err := commitTx.Commit().Error; err != nil {
 					c.errorChan <- err
 					return
 				}
+
+				//
+				atomic.AddInt32(&c.commitCount, 1)
 				c.addProcessedCommit(commit.SHA)
 			}(commit)
 		}
