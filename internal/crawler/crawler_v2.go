@@ -129,7 +129,7 @@ func (c *CrawlerV2) Crawl() bool {
 	perPage := 100
 
 	//
-	var startPage int32 = 1
+	var startPage int32 = 0
 	for i := 0; i < maxConcurrentPages; i++ {
 		c.pageWaitGroup.Add(1)
 		go func(pageOffset int) {
