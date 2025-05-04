@@ -19,8 +19,6 @@ Rate limiting của github:
 *   30 requests / 1 minute (nếu có token)
 *   Chỉ lấy được tối đa 1000 kết quả trên mỗi truy vấn
 
-![No token got rate limiting](imgs/no-token-got-rate.png)
-
 Rate limiting sẽ lấy theo token nếu token có được thêm vào. Nếu không có thì sẽ lấy theo IP của client. Nên cân nhắc (trade off) có sử dụng proxy để giải quyết bài toán rate limiting hay không (khi sử dụng nó thì có tốt hơn việc sử dụng token hay không).
 
 Chúng ta có thể thêm nhiều token vào để sử dụng khi một token hết rate limiting thì chuyển sang sử dụng token khác.

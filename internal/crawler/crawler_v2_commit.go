@@ -1,0 +1,106 @@
+package crawler
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	githubapi "github.com/thep200/github-crawler/internal/github_api"
+	"github.com/thep200/github-crawler/internal/model"
+	"gorm.io/gorm"
+)
+
+// Crawl commits cho một release
+func (c *CrawlerV2) crawlCommits(ctx context.Context, db *gorm.DB, apiCaller *githubapi.Caller, user, repoName string, releaseID int) ([]githubapi.CommitResponse, error) {
+	c.applyRateLimit()
+
+	// Gọi API để lấy commits
+	commits, err := apiCaller.CallCommits(user, repoName)
+	if err != nil {
+		if c.isRateLimitError(err) {
+			c.Logger.Info(ctx, "Rate limit đạt ngưỡng khi crawl commits, đợi 60 giây")
+			time.Sleep(60 * time.Second)
+			commits, err = apiCaller.CallCommits(user, repoName)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
+	}
+
+	if len(commits) == 0 {
+		return commits, nil
+	}
+
+	var wg sync.WaitGroup
+
+	//
+	commitCtx, cancelCommit := context.WithCancel(ctx)
+	defer cancelCommit()
+
+	//
+	for _, commit := range commits {
+		if c.isCommitProcessed(commit.SHA) {
+			continue
+		}
+
+		//
+		select {
+		case <-commitCtx.Done():
+		case c.commitWorkers <- struct{}{}:
+			wg.Add(1)
+			go func(commit githubapi.CommitResponse) {
+				defer wg.Done()
+				defer func() { <-c.commitWorkers }()
+
+				defer func() {
+					if r := recover(); r != nil {
+						c.errorChan <- fmt.Errorf("panic xảy ra trong goroutine xử lý commit: %v", r)
+					}
+				}()
+
+				// Tạo transaction mới cho mỗi commit
+				commitTx := db.Begin()
+				if commitTx.Error != nil {
+					c.errorChan <- commitTx.Error
+					return
+				}
+
+				// Lưu commit
+				commitModel := &model.Commit{
+					Hash:      model.TruncateString(commit.SHA, 250),
+					Message:   model.TruncateString(commit.Commit.Message, 65000),
+					ReleaseID: releaseID,
+					Model: model.Model{
+						Config: c.Config,
+						Logger: c.Logger,
+						Mysql:  c.Mysql,
+					},
+				}
+
+				if err := commitTx.Create(commitModel).Error; err != nil {
+					commitTx.Rollback()
+					if !strings.Contains(err.Error(), "Duplicate entry") {
+						c.errorChan <- err
+					}
+					return
+				}
+
+				// Commit transaction
+				if err := commitTx.Commit().Error; err != nil {
+					c.errorChan <- err
+					return
+				}
+				c.addProcessedCommit(commit.SHA)
+			}(commit)
+		}
+	}
+
+	//
+	wg.Wait()
+
+	return commits, nil
+}
