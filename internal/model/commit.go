@@ -10,6 +10,7 @@ import (
 
 type Commit struct {
 	Model
+	ID        int    `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
 	Hash      string `json:"hash" gorm:"column:hash;type:varchar(255);uniqueIndex"`
 	Message   string `json:"message" gorm:"column:message;type:text;size:65535"`
 	ReleaseID int    `json:"release_id" gorm:"column:release_id;index;not null"`

@@ -10,7 +10,7 @@ import (
 
 type Release struct {
 	Model
-	ID      int    `json:"id" gorm:"column:id;primaryKey;autoIncrement:false"`
+	ID      int    `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
 	Content string `json:"content" gorm:"column:content;type:text;size:65535"`
 	RepoID  int    `json:"repo_id" gorm:"column:repo_id;index;not null"`
 }
