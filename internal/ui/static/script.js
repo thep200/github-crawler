@@ -55,6 +55,9 @@ document.addEventListener('DOMContentLoaded', function() {
             fetchRepositories();
         }
     });
+
+    // Add click event listeners for popups
+    setupPopupClickHandlers();
 });
 
 // Update URL with current search and page parameters
@@ -234,4 +237,32 @@ function closeCommitsPopup() {
     const popup = document.getElementById('commitsPopup');
     popup.style.display = 'none';
     popup.classList.remove('active');
+}
+
+// Setup popup event handlers for closing when clicking outside
+function setupPopupClickHandlers() {
+    // For releases popup
+    document.getElementById('releasesPopup').addEventListener('click', function(event) {
+        // Only close if the click is directly on the popup background (not on its content)
+        if (event.target === this) {
+            closeReleasesPopup();
+        }
+    });
+
+    // For commits popup
+    document.getElementById('commitsPopup').addEventListener('click', function(event) {
+        // Only close if the click is directly on the popup background (not on its content)
+        if (event.target === this) {
+            closeCommitsPopup();
+        }
+    });
+
+    // Add ESC key handling to close popups
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+            // Close any open popup
+            closeReleasesPopup();
+            closeCommitsPopup();
+        }
+    });
 }
