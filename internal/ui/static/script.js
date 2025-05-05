@@ -1,18 +1,17 @@
-// Global variables
+//
 let currentPage = 1;
 let pageSize = 50;
 let totalPages = 1;
 let searchTimeout = null;
 let currentSearchTerm = '';
 
-// Event listeners
+//
 document.addEventListener('DOMContentLoaded', function() {
-    // Parse URL parameters for initial state
     const urlParams = new URLSearchParams(window.location.search);
     const pageParam = urlParams.get('page');
     const searchParam = urlParams.get('search');
 
-    // Set initial values from URL if available
+    //
     if (pageParam && !isNaN(parseInt(pageParam))) {
         currentPage = parseInt(pageParam);
     }
@@ -22,10 +21,10 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('searchInput').value = searchParam;
     }
 
-    // Initial load of repository data
+    //
     fetchRepositories();
 
-    // Set up search input with debounce
+    //
     document.getElementById('searchInput').addEventListener('input', function() {
         if (searchTimeout) {
             clearTimeout(searchTimeout);
@@ -39,7 +38,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }, 300);
     });
 
-    // Set up pagination buttons
+    //
     document.getElementById('prevPage').addEventListener('click', function() {
         if (currentPage > 1) {
             currentPage--;
@@ -56,30 +55,27 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Add click event listeners for popups
+    //
     setupPopupClickHandlers();
 });
 
-// Update URL with current search and page parameters
+//
 function updateUrl() {
     const params = new URLSearchParams();
-
     if (currentSearchTerm) {
         params.set('search', currentSearchTerm);
     }
-
     if (currentPage > 1) {
         params.set('page', currentPage);
     }
-
     const newUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
     history.pushState({ page: currentPage, search: currentSearchTerm }, '', newUrl);
 }
 
-// Fetch repositories from API
+//
 function fetchRepositories() {
+    // Api to fetch repositories
     const url = `/api/repos?page=${currentPage}&pageSize=${pageSize}&search=${encodeURIComponent(currentSearchTerm)}`;
-
     fetch(url)
         .then(response => response.json())
         .then(data => {
@@ -92,7 +88,7 @@ function fetchRepositories() {
         });
 }
 
-// Display repositories in the table
+//
 function displayRepositories(repositories) {
     const tableBody = document.getElementById('repoTableBody');
     tableBody.innerHTML = '';
@@ -115,23 +111,21 @@ function displayRepositories(repositories) {
             <td>${repo.watchCount}</td>
             <td>${repo.issueCount}</td>
             <td class="action-cell">
-                <button onclick="showReleases(${repo.id})">View Releases</button>
+                <button onclick="showReleases(${repo.id})">Releases</button>
             </td>
         `;
         tableBody.appendChild(row);
     });
 }
 
-// Update pagination controls
 function updatePagination(pagination) {
     totalPages = pagination.totalPages;
-
     document.getElementById('pageInfo').textContent = `Page ${pagination.page} of ${pagination.totalPages || 1}`;
     document.getElementById('prevPage').disabled = pagination.page <= 1;
     document.getElementById('nextPage').disabled = pagination.page >= pagination.totalPages;
 }
 
-// Show releases popup for a repository
+//
 function showReleases(repoId) {
     fetch(`/api/releases?repoId=${repoId}`)
         .then(response => response.json())
@@ -147,14 +141,14 @@ function showReleases(repoId) {
         });
 }
 
-// Display releases in the popup
+//
 function displayReleases(releases, repoId) {
     const tableBody = document.getElementById('releaseTableBody');
     tableBody.innerHTML = '';
 
     if (releases.length === 0) {
         const row = document.createElement('tr');
-        row.innerHTML = '<td colspan="3" align="center">No releases found for this repository</td>';
+        row.innerHTML = '<td colspan="3" align="center">Không có dữ liệu!</td>';
         tableBody.appendChild(row);
         return;
     }
@@ -165,7 +159,7 @@ function displayReleases(releases, repoId) {
             <td>${release.id}</td>
             <td>${escapeHtml(release.content.substring(0, 100))}${release.content.length > 100 ? '...' : ''}</td>
             <td class="action-cell">
-                <button onclick="showCommits(${release.id})">View Commits</button>
+                <button onclick="showCommits(${release.id})">Commits</button>
             </td>
         `;
         tableBody.appendChild(row);
@@ -174,14 +168,14 @@ function displayReleases(releases, repoId) {
     document.getElementById('releasesPopup').querySelector('h2').textContent = `Releases for Repository #${repoId}`;
 }
 
-// Show commits popup for a release
+//
 function showCommits(releaseId) {
     fetch(`/api/commits?releaseId=${releaseId}`)
         .then(response => response.json())
         .then(commits => {
             displayCommits(commits, releaseId);
             const popup = document.getElementById('commitsPopup');
-            popup.style.display = 'flex'; // Changed from 'block' to 'flex'
+            popup.style.display = 'flex';
             popup.classList.add('active');
         })
         .catch(error => {
@@ -197,7 +191,7 @@ function displayCommits(commits, releaseId) {
 
     if (commits.length === 0) {
         const row = document.createElement('tr');
-        row.innerHTML = '<td colspan="3" align="center">No commits found for this release</td>';
+        row.innerHTML = '<td colspan="3" align="center">Không có dữ liệu!</td>';
         tableBody.appendChild(row);
         return;
     }
@@ -212,10 +206,9 @@ function displayCommits(commits, releaseId) {
         tableBody.appendChild(row);
     });
 
-    document.getElementById('commitsPopup').querySelector('h2').textContent = `Commits for Release #${releaseId}`;
+    document.getElementById('commitsPopup').querySelector('h2').textContent = `Commits of Release #${releaseId}`;
 }
 
-// Helper function to escape HTML to prevent XSS
 function escapeHtml(text) {
     if (!text) return '';
     return text
@@ -226,7 +219,6 @@ function escapeHtml(text) {
         .replace(/'/g, "&#039;");
 }
 
-// Add functions to close popups
 function closeReleasesPopup() {
     const popup = document.getElementById('releasesPopup');
     popup.style.display = 'none';
@@ -239,28 +231,23 @@ function closeCommitsPopup() {
     popup.classList.remove('active');
 }
 
-// Setup popup event handlers for closing when clicking outside
+//
 function setupPopupClickHandlers() {
-    // For releases popup
     document.getElementById('releasesPopup').addEventListener('click', function(event) {
-        // Only close if the click is directly on the popup background (not on its content)
         if (event.target === this) {
             closeReleasesPopup();
         }
     });
 
-    // For commits popup
     document.getElementById('commitsPopup').addEventListener('click', function(event) {
-        // Only close if the click is directly on the popup background (not on its content)
         if (event.target === this) {
             closeCommitsPopup();
         }
     });
 
-    // Add ESC key handling to close popups
+    // Close modal
     document.addEventListener('keydown', function(event) {
         if (event.key === 'Escape') {
-            // Close any open popup
             closeReleasesPopup();
             closeCommitsPopup();
         }

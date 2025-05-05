@@ -35,7 +35,6 @@ func main() {
 
 	// Run server in a goroutine
 	go func() {
-		logger.Info(ctx, "Starting UI server on port %d", *port)
 		if err := server.Start(); err != nil {
 			logger.Error(ctx, "Server failed to start: %v", err)
 			os.Exit(1)

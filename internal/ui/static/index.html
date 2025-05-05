@@ -3,128 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GitHub Repository Browser</title>
-    <style>
-        body {
-            margin: 0;
-            padding: 10px;
-            font-family: Arial, sans-serif;
-        }
-        /* Basic styling without external CSS */
-        .search-container {
-            display: flex;
-            align-items: center;
-            margin-bottom: 20px;
-            padding: 10px 0;
-            background-color: white;
-            position: sticky;
-            top: 0;
-            z-index: 10;
-            width: 100%;
-        }
-        .search-box {
-            flex-grow: 1;
-            margin-right: 20px;
-        }
-        #searchInput {
-            width: 100%;
-            padding: 10px;
-            font-size: 16px;
-            height: 40px;
-            box-sizing: border-box;
-        }
-        .pagination {
-            white-space: nowrap;
-            display: flex;
-            align-items: center;
-        }
-        .pagination button {
-            padding: 10px 15px;
-            font-size: 16px;
-            height: 40px;
-        }
-        .pagination span {
-            margin: 0 10px;
-        }
-        .table-container {
-            height: calc(100vh - 80px);
-            overflow-y: auto;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        thead {
-            position: sticky;
-            top: 0;
-            background-color: white;
-            z-index: 5;
-        }
-        th, td {
-            padding: 8px;
-            text-align: left;
-            border: 1px solid #ddd;
-        }
-        /* Center action buttons in their cells */
-        td.action-cell {
-            text-align: center;
-        }
-        .popup {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: rgba(0, 0, 0, 0.5); /* Semi-transparent overlay */
-            z-index: 100;
-            justify-content: center;
-            align-items: center;
-        }
-
-        .popup.active {
-            display: flex;
-        }
-
-        .popup-container {
-            background-color: white;
-            padding: 20px;
-            border: 1px solid black;
-            width: 80%;
-            height: 80vh;
-            max-width: 1200px;
-            display: flex;
-            flex-direction: column;
-            border-radius: 4px;
-        }
-
-        .popup-header {
-            position: sticky;
-            top: 0;
-            background-color: white;
-            padding-bottom: 10px;
-            margin-bottom: 10px;
-            border-bottom: 1px solid #ddd;
-        }
-
-        .popup-content {
-            flex-grow: 1;
-            overflow-y: auto;
-            margin-bottom: 10px;
-        }
-
-        .popup-content table {
-            width: 100%;
-        }
-    </style>
+    <title>GitHub star ranking</title>
+    <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <!-- Search and pagination container -->
+    <!-- Search -->
     <div class="search-container">
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="Type to search...">
         </div>
-
         <div class="pagination">
             <button id="prevPage">Previous</button>
             <span id="pageInfo">Page 1 of 1</span>
@@ -132,7 +19,7 @@
         </div>
     </div>
 
-    <!-- Repository table -->
+    <!-- Table -->
     <div class="table-container">
         <table border="1" cellpadding="5" cellspacing="0">
             <thead>
@@ -147,13 +34,11 @@
                     <th>Actions</th>
                 </tr>
             </thead>
-            <tbody id="repoTableBody">
-                <!-- Repository rows will be inserted here -->
-            </tbody>
+            <tbody id="repoTableBody"></tbody>
         </table>
     </div>
 
-    <!-- Popup for releases -->
+    <!-- Modal releases -->
     <div id="releasesPopup" class="popup">
         <div class="popup-container">
             <div class="popup-header">
@@ -168,15 +53,13 @@
                             <th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody id="releaseTableBody">
-                        <!-- Release rows will be inserted here -->
-                    </tbody>
+                    <tbody id="releaseTableBody"></tbody>
                 </table>
             </div>
         </div>
     </div>
 
-    <!-- Popup for commits -->
+    <!-- Modal commit -->
     <div id="commitsPopup" class="popup">
         <div class="popup-container">
             <div class="popup-header">
@@ -191,9 +74,7 @@
                             <th>Message</th>
                         </tr>
                     </thead>
-                    <tbody id="commitTableBody">
-                        <!-- Commit rows will be inserted here -->
-                    </tbody>
+                    <tbody id="commitTableBody"></tbody>
                 </table>
             </div>
         </div>

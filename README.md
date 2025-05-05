@@ -1,18 +1,33 @@
 # Github repository crawler
 
-Project này crawl thông tin (name, start, ...) của các repository được public trên github.
+Project này crawl thông tin của 5000 `repository` có nhiều sao nhất trên github. Có bao gồm thông tin về `release` và `commits` tương ứng
 
-## Start project
+## Starting
 
-*   `go mod vendor`
-*   `go mod tidy`
+**Setting manual:**
+
+*   Cài đặt golang version `1.23.0` (có thể cài đặt thông qua brew (Macos))
+*   Clone và cd vào thư mục chứa source code này, sau đó chạy các command:
+    *   `go mod vendor`
+    *   `go mod tidy`
+
+**Run crawler:**
+
 *   `go run cmd/run/main -version=v1`
+      *   `-version=v1`
+      *   `-version=v2`
+      *   `-version=v3`
+
+**Run app UI:**
+
+*   `go run cmd/ui/main -port=8080`
 
 ## Pre-condition
 
 Cần crawl đủ 5000 repository của github có số sao cao nhất. Các thông tin cần crawl bao gồm:
-*   Tên repository
-*   Số lượng sao
+*   Repository
+*   Release
+*   Commit
 
 Rate limiting của github:
 *   10 requests / 1 minute (nếu không có token)
@@ -23,22 +38,16 @@ Rate limiting sẽ lấy theo token nếu token có được thêm vào. Nếu k
 
 Chúng ta có thể thêm nhiều token vào để sử dụng khi một token hết rate limiting thì chuyển sang sử dụng token khác.
 
-### Github API
+### API Check ratelimit
 
-Github APIs
-*   `https://api.github.com/search/repositories?q=stars:>1&sort=stars&order=desc&per_page=12` được sử dụng để lấy các thông tin cần thiết từ repo
-*   `https://api.github.com/rate_limit` check rate limit
+`https://api.github.com/rate_limit`
 
-### Thu thập thông tin repo
+### API Thu thập thông tin repository
+
 `https://api.github.com/search/repositories?q=stars:>1&sort=stars&order=desc`
 
-**Cách thức hoạt động:**
-- Crawler gọi GitHub Search API để lấy danh sách repository
-- API trả về danh sách các repositories được sắp xếp theo số lượng sao (stars) từ cao đến thấp
-- Mỗi trang chứa tối đa 100 repositories (tham số `per_page=100`)
-- Crawler thực hiện phân trang (pagination) bằng cách tăng tham số `page` để lấy tổng cộng 5000 repositories
-
 **Mẫu phản hồi API:**
+
 ```json
 {
   "total_count": 1234,
@@ -63,25 +72,12 @@ Github APIs
 }
 ```
 
-**Thông tin thu thập:**
-- ID repository
-- Tên repository
-- Tên người dùng/tổ chức sở hữu (owner)
-- Số lượng sao (stars)
-- Số lượng fork
-- Số lượng người theo dõi (watchers)
-- Số lượng issues đang mở
-
-### Thu thập thông tin releases
+### API Thu thập thông tin releases
 
 `https://api.github.com/repos/{user}/{repo}/releases`
 
-**Cách thức hoạt động:**
-- Sau khi lưu thông tin repository, crawler sẽ gọi đến GitHub Releases API cho mỗi repository
-- URL được xây dựng dựa trên template, thay thế các placeholder `{user}` và `{repo}`
-- Lấy toàn bộ thông tin release mà không giới hạn số lượng
-
 **Mẫu phản hồi API:**
+
 ```json
 [
   {
@@ -105,22 +101,12 @@ Github APIs
 ]
 ```
 
-**Thông tin thu thập:**
-- Tag name (ví dụ: v1.0.0)
-- Tên release
-- Thời gian tạo và xuất bản
-- Nội dung release (release notes)
-
-### Thu thập thông tin commits
+### API Thu thập thông tin commits
 
 `https://api.github.com/repos/{user}/{repo}/commits`
 
-**Cách thức hoạt động:**
-- Sau khi lưu thông tin release, crawler sẽ gọi đến GitHub Commits API cho mỗi repository
-- URL được xây dựng dựa trên template, với các placeholder `{user}` và `{repo}`
-- Lấy toàn bộ commit mà không giới hạn số lượng
-
 **Mẫu phản hồi API:**
+
 ```json
 [
   {
@@ -147,27 +133,9 @@ Github APIs
 ]
 ```
 
-**Thông tin thu thập:**
-- SHA của commit
-- Thông điệp commit
-- Thông tin tác giả và thời gian commit
-
-## Quy trình xử lý dữ liệu
-
-1. Lấy và lưu repository từ GitHub
-2. Lấy và lưu tất cả releases của repository đó, mỗi release liên kết với repository qua `repo_id`
-3. Lấy và lưu tất cả commits của repository, mỗi commit được liên kết với một release qua `release_id`
-
-Crawler sử dụng giao dịch (transaction) để đảm bảo tính nhất quán của dữ liệu, đồng thời kiểm tra trùng lặp để tránh lưu cùng một dữ liệu nhiều lần.
-
-### Giới hạn và tối ưu hóa
-
-- **Rate Limiting**: GitHub giới hạn số lượng request (5000/giờ với token, 60/giờ không có token)
-- **Pagination**: GitHub Search API chỉ trả về tối đa 1000 kết quả
-- **Truncation**: Tự động cắt nội dung dài để phù hợp với giới hạn của database
-- **Request Throttling**: Giới hạn số lượng request mỗi giây để tránh bị GitHub chặn
-
 ## Database
+
+Sử dụng database `mysql` Gồm có 3 bảng tương ứng như sau:
 
 ```mermaid
 erDiagram
@@ -184,7 +152,6 @@ erDiagram
         int issue_count
         timestamp created_at
         timestamp updated_at
-        timestamp deleted_at
     }
 
     releases {
@@ -193,7 +160,6 @@ erDiagram
         int repo_id FK
         timestamp created_at
         timestamp updated_at
-        timestamp deleted_at
     }
 
     commits {
@@ -203,7 +169,6 @@ erDiagram
         int release_id FK
         timestamp created_at
         timestamp updated_at
-        timestamp deleted_at
     }
 ```
 
@@ -212,10 +177,10 @@ erDiagram
 ### Version 1
 
 Crawl thông qua API search repository của github
-*   Tuần tự gửi từng request
+*   Tuần tự gửi từng request để lấy thông tin `repos`. Từ thông tin `repos` lấy thông tin `release` và từ thông tin `release` lấy thông tin `commits` tương ứng
 *   Bị chặn bởi limit 1000 record cho mỗi query
-*   Có áp dụng Rate limiting để chờ request nếu bị chặn
-*   Lưu được thông tin repo, commit, release vào database mysql
+*   Có áp dụng Rate limiting để hold request trong thời gian cố định chứ không bị chết app
+*   Lưu được thông tin `repos`, `commits`, `releases` vào database
 
 ```mermaid
 sequenceDiagram
@@ -294,8 +259,10 @@ sequenceDiagram
 ### Version 2
 
 Crawler version 2
-*   Crawl bất đồng bộ sử dụng nhiều worker
-*   Semaphore để kiểm soát và giới hạn API
+*   Kế thừa từ version 1
+*   Sử dụng `worker pools pattern` để crawl bất đồng bộ các thông tin `repos`, `commits` và `releases`
+*   Nâng cấp rate limiting bằng `Semaphore pattern`. Kiểm soát tốt hơn số lượng worker truy cập vào tài nguyên để write hoặc read
+*   `Error monitor` để giám sát lỗi từ nhiều worker và xử lý (retry 3 lần với backoff timing)
 
 ```mermaid
 sequenceDiagram
@@ -394,10 +361,14 @@ sequenceDiagram
 
 ### Version 3
 
-Crawler version 2
-*   Kế thừa bất đồng bộ từ V2
-*   Time-based crawling strategy để pass qua limit 1000 repo trong mỗi query
-*   Chia thành 2 phase cho crawl (crawl số lượng repo trước và crawl commit và release của repo sau)
+Crawler version 3
+*   Kế thừa bất đồng bộ từ 2 version trước (1 và 2)
+*   `Time-based crawling strategy` để pass qua limit 1000 repo trong mỗi query. Đồng thời thêm `time worker window` để chạy bất đồng bộ trên nhiều khoảng thời gian.
+*   Chia thành `2 phases`
+    *   Phase 1 crawl nhiều repository từ time base. Sau đó lọc và chỉ lấy 5000 repository có số sao cao nhất
+    *   Phase 2 thực hiện crawl thông tin `releases` và `commits` tương ứng của 5000 `repos` đã được chọn ở trên
+*   Thêm `logging` chi tiết hơn.
+
 
 ```mermaid
 sequenceDiagram
@@ -521,9 +492,9 @@ sequenceDiagram
     deactivate CrawlerV3
 ```
 
-## Compare
+## Documentation
 
-## Run command and access via `http://localhost:6060/pkg/prepuld/?m=all`
+Clone source code chạy theo hướng dẫn ở phần `Starting`. Chạy command dưới và truy cập vào `http://localhost:6060/pkg/prepuld/?m=all` để đọc doc kỹ thuật của các module.
 
 ```sh
 godoc -http=:6060

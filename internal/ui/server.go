@@ -11,7 +11,7 @@ import (
 	"github.com/thep200/github-crawler/pkg/log"
 )
 
-// Server represents the UI web server
+// Server
 type Server struct {
 	Logger log.Logger
 	Config *cfg.Config
@@ -20,7 +20,7 @@ type Server struct {
 	port   int
 }
 
-// NewServer creates a new UI server
+// Constructor
 func NewServer(logger log.Logger, config *cfg.Config, mysql *db.Mysql, port int) (*Server, error) {
 	return &Server{
 		Logger: logger,
@@ -30,7 +30,7 @@ func NewServer(logger log.Logger, config *cfg.Config, mysql *db.Mysql, port int)
 	}, nil
 }
 
-// Start initializes and starts the HTTP server
+// Start
 func (s *Server) Start() error {
 	handler, err := NewHandler(s.Logger, s.Config, s.MySQL)
 	if err != nil {
@@ -56,7 +56,7 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// Stop gracefully stops the HTTP server
+// Gracefully shutdown
 func (s *Server) Stop(ctx context.Context) error {
 	if s.server != nil {
 		s.Logger.Info(ctx, "Shutting down UI server")
