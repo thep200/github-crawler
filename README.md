@@ -394,7 +394,10 @@ sequenceDiagram
 
 ### Version 3
 
-time-based crawling strategy
+Crawler version 2
+*   Kế thừa bất đồng bộ từ V2
+*   Time-based crawling strategy để pass qua limit 1000 repo trong mỗi query
+*   Chia thành 2 phase cho crawl (crawl số lượng repo trước và crawl commit và release của repo sau)
 
 ## Compare
 
