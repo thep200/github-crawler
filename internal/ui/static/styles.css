@@ -1,0 +1,217 @@
+/* General Styles */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+/* Minimal styling with only margins and centering */
+body {
+    margin: 0 auto;
+    padding: 20px;
+    font-family: sans-serif;
+    max-width: 1200px;
+}
+
+.container {
+    margin: 0 auto;
+    padding: 20px;
+    width: 100%;
+}
+
+header {
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    text-align: center;
+}
+
+header h1 {
+    color: #24292e;
+    margin-bottom: 10px;
+    font-size: 2.5em;
+}
+
+header p {
+    color: #586069;
+}
+
+/* Filter and Search */
+.filter-container {
+    margin-bottom: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.search-bar {
+    padding: 10px;
+    display: flex;
+    align-items: center;
+}
+
+.search-bar input {
+    margin-right: 10px;
+    padding: 8px;
+    min-width: 250px;
+}
+
+.search-bar button {
+    padding: 8px 12px;
+    background-color: #0366d6;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+/* Simple Table Styles */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px auto;
+}
+
+th, td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+}
+
+th {
+    background-color: #f1f1f1;
+}
+
+tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+/* Pagination */
+.pagination {
+    margin: 15px auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.pagination button {
+    margin: 0 5px;
+    padding: 8px 12px;
+    background-color: #0366d6;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.pagination button:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+}
+
+.pagination span {
+    margin: 0 10px;
+    font-size: 14px;
+}
+
+/* Loading Indicator */
+#loadingIndicator,
+#releaseLoadingIndicator,
+#commitLoadingIndicator {
+    margin: 20px auto;
+    text-align: center;
+    color: #586069;
+    font-style: italic;
+}
+
+#noResultsMessage,
+#noReleasesMessage,
+#noCommitsMessage {
+    margin: 20px auto;
+    text-align: center;
+    color: #586069;
+    font-style: italic;
+}
+
+/* Modal Styles */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0, 0, 0, 0.4);
+}
+
+.modal-content {
+    position: relative;
+    background-color: #fff;
+    margin: 5% auto;
+    padding: 20px;
+    border: 1px solid #ddd;
+    width: 80%;
+    max-width: 800px;
+}
+
+.modal-header {
+    padding: 15px 20px;
+    margin-bottom: 15px;
+    border-bottom: 1px solid #ddd;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h2 {
+    margin: 0;
+    flex: 1;
+}
+
+.close-modal {
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.modal-body {
+    padding: 20px;
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+/* Release Cards */
+.release-card {
+    margin-bottom: 15px;
+    padding: 15px;
+    border: 1px solid #ddd;
+    text-align: left;
+    background-color: #f9f9f9;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Responsive styles */
+@media (max-width: 768px) {
+    .filter-container {
+        flex-direction: column;
+    }
+
+    .search-bar {
+        width: 100%;
+        margin-bottom: 15px;
+        justify-content: center;
+    }
+
+    .search-bar input {
+        width: 100%;
+    }
+
+    table {
+        display: block;
+        overflow-x: auto;
+    }
+}
+
