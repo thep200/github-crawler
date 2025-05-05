@@ -4,6 +4,7 @@ let pageSize = 50;
 let totalPages = 1;
 let searchTimeout = null;
 let currentSearchTerm = '';
+let toastTimeout = null;
 
 //
 document.addEventListener('DOMContentLoaded', function() {
@@ -81,10 +82,14 @@ function fetchRepositories() {
         .then(data => {
             displayRepositories(data.repositories);
             updatePagination(data.pagination);
+
+            if (data.repositories.length === 0) {
+                showToast('Không có dữ liệu!', 'info');
+            }
         })
         .catch(error => {
             console.error('Error fetching repositories:', error);
-            alert('Failed to fetch repositories. Please try again.');
+            showToast('Không có dữ liệu!');
         });
 }
 
@@ -134,10 +139,14 @@ function showReleases(repoId) {
             const popup = document.getElementById('releasesPopup');
             popup.style.display = 'flex';
             popup.classList.add('active');
+
+            if (releases.length === 0) {
+                showToast('Không có dữ liệu!', 'info');
+            }
         })
         .catch(error => {
             console.error('Error fetching releases:', error);
-            alert('Failed to fetch releases. Please try again.');
+            showToast('Không có dữ liệu!');
         });
 }
 
@@ -177,10 +186,14 @@ function showCommits(releaseId) {
             const popup = document.getElementById('commitsPopup');
             popup.style.display = 'flex';
             popup.classList.add('active');
+
+            if (commits.length === 0) {
+                showToast('Không có dữ liệu!', 'info');
+            }
         })
         .catch(error => {
             console.error('Error fetching commits:', error);
-            alert('Failed to fetch commits. Please try again.');
+            showToast('Không có dữ liệu!');
         });
 }
 
@@ -252,4 +265,47 @@ function setupPopupClickHandlers() {
             closeCommitsPopup();
         }
     });
+}
+
+//
+function showToast(message, type = 'error') {
+    if (toastTimeout) {
+        clearTimeout(toastTimeout);
+        const existingToast = document.getElementById('toast-notification');
+        if (existingToast) {
+            document.body.removeChild(existingToast);
+        }
+    }
+
+    //
+    const toast = document.createElement('div');
+    toast.id = 'toast-notification';
+    toast.innerText = message;
+
+    //
+    toast.style.position = 'fixed';
+    toast.style.top = '20px';
+    toast.style.right = '20px';
+    toast.style.padding = '10px 25px';
+    toast.style.borderRadius = '4px';
+    toast.style.backgroundColor = type === 'error' ? '#f44336' : '#4CAF50';
+    toast.style.color = 'white';
+    toast.style.zIndex = '1000';
+    toast.style.minWidth = '250px';
+    toast.style.textAlign = 'center';
+    toast.style.boxShadow = '0 2px 5px rgba(0,0,0,0.3)';
+    toast.style.transition = 'opacity 0.75s ease-in-out';
+
+    //
+    document.body.appendChild(toast);
+
+    // Auto close after 1 seconds
+    toastTimeout = setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => {
+            if (toast.parentNode) {
+                document.body.removeChild(toast);
+            }
+        }, 750);
+    }, 750);
 }

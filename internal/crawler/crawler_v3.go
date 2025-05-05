@@ -1,7 +1,6 @@
-// filepath: /Users/thep200/Projects/Study/github-crawler/internal/crawler/crawler_v3.go
-// Crawler version 3
-// Crawler vượt qua giới hạn GitHub API bằng cách sử dụng chiến lược time-based query
-// với hai giai đoạn song song: ưu tiên thu thập 5000 repo trước, sau đó xử lý commits và releases
+// Crawler v3
+// Crawler GitHub API sử dụng time-based query
+// Chia thành hai giai đoạn: ưu tiên thu thập 5000 repo trước, sau đó xử lý commits và releases sau
 
 package crawler
 
@@ -43,7 +42,7 @@ type CrawlerV3 struct {
 	errorChan      chan error
 	backgroundWg   sync.WaitGroup
 
-	// Counters for tracking progress
+	// Counters
 	repoCount     int32
 	releaseCount  int32
 	commitCount   int32
@@ -51,7 +50,7 @@ type CrawlerV3 struct {
 	pageWorkers   chan struct{}
 	pageWaitGroup sync.WaitGroup
 
-	// Time-based crawling
+	// Time-based
 	timeWindows       []timeWindow
 	currentWindowLock sync.Mutex
 	currentWindowIdx  int
