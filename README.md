@@ -399,6 +399,128 @@ Crawler version 2
 *   Time-based crawling strategy để pass qua limit 1000 repo trong mỗi query
 *   Chia thành 2 phase cho crawl (crawl số lượng repo trước và crawl commit và release của repo sau)
 
+```mermaid
+sequenceDiagram
+    participant Client
+    participant CrawlerV3
+    participant TimeWindowWorkers
+    participant ErrorMonitor
+    participant WorkerPools
+    participant GitHubAPI
+    participant Database
+
+    Client->>CrawlerV3: Crawl()
+    activate CrawlerV3
+
+    CrawlerV3->>ErrorMonitor: Start error monitoring
+    activate ErrorMonitor
+
+    CrawlerV3->>WorkerPools: Initialize (repo, release, commit, page workers)
+
+    %% Phase 1: Repository Collection
+    CrawlerV3->>CrawlerV3: collectRepositoriesPhase()
+
+    par Phase 1: Multiple time windows processed concurrently
+        loop For each time window worker (maxConcurrentWindows=2)
+            CrawlerV3->>CrawlerV3: getNextTimeWindow()
+
+            par Multiple pages per time window
+                loop Each page (maxPagesPerWindow=10)
+                    CrawlerV3->>TimeWindowWorkers: crawlTimeWindowPage()
+                    activate TimeWindowWorkers
+                    TimeWindowWorkers->>TimeWindowWorkers: applyRateLimit()
+                    TimeWindowWorkers->>GitHubAPI: Call() - Get Repositories by time range
+                    activate GitHubAPI
+                    GitHubAPI-->>TimeWindowWorkers: Return Repositories
+                    deactivate GitHubAPI
+
+                    TimeWindowWorkers->>TimeWindowWorkers: Store in allRepos collection
+
+                    alt Collected >= 10000 repos
+                        TimeWindowWorkers->>CrawlerV3: Signal collection phase complete
+                    end
+                    deactivate TimeWindowWorkers
+                end
+            end
+        end
+    end
+
+    %% Phase 2: Processing Repositories
+    CrawlerV3->>CrawlerV3: processRepositoriesPhase()
+    CrawlerV3->>CrawlerV3: processTopRepositories()
+    CrawlerV3->>CrawlerV3: Sort repositories by stars
+    CrawlerV3->>CrawlerV3: Take top 5000 repositories
+
+    par Phase 2: Process top repositories concurrently
+        loop For each repository (maxRepoWorkers=10)
+            CrawlerV3->>CrawlerV3: crawlRepo()
+
+            alt Not already processed
+                CrawlerV3->>Database: Begin Transaction
+                activate Database
+                CrawlerV3->>Database: Create Repository record
+                CrawlerV3->>Database: Commit Transaction
+                deactivate Database
+                CrawlerV3->>CrawlerV3: Add to processedRepoIDs
+
+                alt In top 2000 repos
+                    par Process releases concurrently (in background)
+                        CrawlerV3->>CrawlerV3: crawlReleasesAndCommitsAsync()
+                        activate CrawlerV3
+                        CrawlerV3->>CrawlerV3: applyRateLimit()
+                        CrawlerV3->>GitHubAPI: CallReleases()
+                        activate GitHubAPI
+                        GitHubAPI-->>CrawlerV3: Return Releases
+                        deactivate GitHubAPI
+
+                        par Process releases concurrently
+                            loop For each release (maxReleaseWorkers=20)
+                                alt Not already processed
+                                    CrawlerV3->>Database: Begin Transaction
+                                    activate Database
+                                    CrawlerV3->>Database: Create Release record
+                                    CrawlerV3->>Database: Commit Transaction
+                                    deactivate Database
+                                    CrawlerV3->>CrawlerV3: Add to processedReleaseKeys
+
+                                    par Process commits concurrently
+                                        CrawlerV3->>CrawlerV3: applyRateLimit()
+                                        CrawlerV3->>GitHubAPI: CallCommits()
+                                        activate GitHubAPI
+                                        GitHubAPI-->>CrawlerV3: Return Commits
+                                        deactivate GitHubAPI
+
+                                        loop For each commit (maxCommitWorkers=30)
+                                            alt Not already processed
+                                                CrawlerV3->>Database: Begin Transaction
+                                                activate Database
+                                                CrawlerV3->>Database: Create Commit record
+                                                CrawlerV3->>Database: Commit Transaction
+                                                deactivate Database
+                                                CrawlerV3->>CrawlerV3: Add to processedCommitHashes
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        deactivate CrawlerV3
+                    end
+                end
+            else Repository already processed
+                CrawlerV3->>CrawlerV3: Skip repository
+            end
+        end
+    end
+
+    CrawlerV3->>CrawlerV3: Wait for all background tasks
+    CrawlerV3->>ErrorMonitor: Stop error monitoring
+    deactivate ErrorMonitor
+    CrawlerV3->>CrawlerV3: logCrawlResults()
+    CrawlerV3-->>Client: Return Success/Failure
+    deactivate CrawlerV3
+```
+
 ## Compare
 
 ## Run command and access via `http://localhost:6060/pkg/prepuld/?m=all`
