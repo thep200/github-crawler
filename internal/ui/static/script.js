@@ -93,6 +93,28 @@ function fetchRepositories() {
         });
 }
 
+// Check if a repository has releases
+function checkRepositoryHasReleases(repoId) {
+    return fetch(`/api/releases?repoId=${repoId}`)
+        .then(response => response.json())
+        .then(releases => releases.length > 0)
+        .catch(error => {
+            console.error('Error checking releases:', error);
+            return false;
+        });
+}
+
+// Check if a release has commits
+function checkReleaseHasCommits(releaseId) {
+    return fetch(`/api/commits?releaseId=${releaseId}`)
+        .then(response => response.json())
+        .then(commits => commits.length > 0)
+        .catch(error => {
+            console.error('Error checking commits:', error);
+            return false;
+        });
+}
+
 //
 function displayRepositories(repositories) {
     const tableBody = document.getElementById('repoTableBody');
@@ -105,8 +127,17 @@ function displayRepositories(repositories) {
         return;
     }
 
+    // Keep track of pending promises
+    const promises = [];
+
     repositories.forEach(repo => {
         const row = document.createElement('tr');
+
+        // Create a temporary cell for action button that will be updated
+        const actionCell = document.createElement('td');
+        actionCell.className = 'action-cell';
+        actionCell.innerHTML = '<span>Checking...</span>';
+
         row.innerHTML = `
             <td>${repo.id}</td>
             <td>${escapeHtml(repo.user)}</td>
@@ -115,14 +146,29 @@ function displayRepositories(repositories) {
             <td>${repo.forkCount}</td>
             <td>${repo.watchCount}</td>
             <td>${repo.issueCount}</td>
-            <td class="action-cell">
-                <button onclick="showReleases(${repo.id})">Releases</button>
-            </td>
         `;
+        row.appendChild(actionCell);
         tableBody.appendChild(row);
+
+        // Check if the repository has releases
+        const promise = checkRepositoryHasReleases(repo.id).then(hasReleases => {
+            if (hasReleases) {
+                actionCell.innerHTML = `<button onclick="showReleases(${repo.id})">Releases</button>`;
+            } else {
+                actionCell.innerHTML = '<span>No releases</span>';
+            }
+        });
+
+        promises.push(promise);
+    });
+
+    // Wait for all checks to complete
+    Promise.all(promises).catch(error => {
+        console.error('Error checking repositories for releases:', error);
     });
 }
 
+//
 function updatePagination(pagination) {
     totalPages = pagination.totalPages;
     document.getElementById('pageInfo').textContent = `Page ${pagination.page} of ${pagination.totalPages || 1}`;
@@ -162,16 +208,39 @@ function displayReleases(releases, repoId) {
         return;
     }
 
+    // Keep track of pending promises
+    const promises = [];
+
     releases.forEach(release => {
         const row = document.createElement('tr');
+
+        // Create a temporary cell for action button that will be updated
+        const actionCell = document.createElement('td');
+        actionCell.className = 'action-cell';
+        actionCell.innerHTML = '<span>Checking...</span>';
+
         row.innerHTML = `
             <td>${release.id}</td>
             <td>${escapeHtml(release.content.substring(0, 100))}${release.content.length > 100 ? '...' : ''}</td>
-            <td class="action-cell">
-                <button onclick="showCommits(${release.id})">Commits</button>
-            </td>
         `;
+        row.appendChild(actionCell);
         tableBody.appendChild(row);
+
+        // Check if the release has commits
+        const promise = checkReleaseHasCommits(release.id).then(hasCommits => {
+            if (hasCommits) {
+                actionCell.innerHTML = `<button onclick="showCommits(${release.id})">Commits</button>`;
+            } else {
+                actionCell.innerHTML = '<span>No commits</span>';
+            }
+        });
+
+        promises.push(promise);
+    });
+
+    // Wait for all checks to complete
+    Promise.all(promises).catch(error => {
+        console.error('Error checking releases for commits:', error);
     });
 
     document.getElementById('releasesPopup').querySelector('h2').textContent = `Releases for Repository #${repoId}`;

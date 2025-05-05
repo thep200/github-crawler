@@ -55,23 +55,23 @@ type CrawlerV3 struct {
 	currentWindowLock sync.Mutex
 	currentWindowIdx  int
 
-	// Thêm một mutex và slice để theo dõi tất cả repositories đã crawl
+	// Phase 1 monitor
 	allReposMutex sync.Mutex
 	allRepos      []RepositorySummary
 
 	// Phase control
-	repoCollectionDone chan struct{} // Signal khi đã thu thập đủ repos
-	secondPhaseDone    chan struct{} // Signal khi phase 2 hoàn thành
+	firstPhaseDone  chan struct{}
+	secondPhaseDone chan struct{}
 }
 
-// Cấu trúc để định nghĩa một cửa sổ thời gian cho việc tìm kiếm
+// Time window để chạy time-base
 type timeWindow struct {
 	startDate time.Time
 	endDate   time.Time
 	processed bool
 }
 
-// Cấu trúc lưu thông tin tóm tắt về repository để sắp xếp theo số sao
+// Lưu tạm vào mem rồi sort sau
 type RepositorySummary struct {
 	ID        int64
 	Stars     int64
@@ -86,16 +86,13 @@ func NewCrawlerV3(logger log.Logger, config *cfg.Config, mysql *db.Mysql) (*Craw
 	commitMd, _ := model.NewCommit(config, logger, mysql)
 	rateLimiter := limiter.NewRateLimiter(config.GithubApi.RequestsPerSecond)
 
-	// Cấu hình số lượng worker tối đa
+	// Số lượng worker
 	maxRepoWorkers := 10
 	maxReleaseWorkers := 20
 	maxCommitWorkers := 30
 	maxPageWorkers := 15
 
-	// Tạo các time windows cho việc tìm kiếm
-	// Cần tạo đủ windows để bao quát toàn bộ dữ liệu cần crawl
 	timeWindows := generateTimeWindows()
-
 	return &CrawlerV3{
 		Logger:                logger,
 		Config:                config,
@@ -117,62 +114,54 @@ func NewCrawlerV3(logger log.Logger, config *cfg.Config, mysql *db.Mysql) (*Craw
 		repoCount:             0,
 		releaseCount:          0,
 		commitCount:           0,
-		maxRepos:              5000, // Mục tiêu là 5000 repos
+		maxRepos:              5000,
 		timeWindows:           timeWindows,
 		currentWindowIdx:      0,
 		allReposMutex:         sync.Mutex{},
-		allRepos:              make([]RepositorySummary, 0, 10000), // Dự kiến lưu trữ nhiều hơn để có thể sắp xếp
-		repoCollectionDone:    make(chan struct{}),
+		allRepos:              make([]RepositorySummary, 0, 10000),
+		firstPhaseDone:        make(chan struct{}),
 		secondPhaseDone:       make(chan struct{}),
 	}, nil
 }
 
-// Tạo các khoảng thời gian để query GitHub API với ưu tiên cho repo mới và nhiều sao
+// Time-base
 func generateTimeWindows() []timeWindow {
 	windows := []timeWindow{
-		// Khoảng thời gian đầu tiên: repos rất mới và rất phổ biến
 		{
 			startDate: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 			endDate:   time.Now(),
 			processed: false,
 		},
-		// Khoảng thời gian thứ hai: 2023 - repos phổ biến gần đây
 		{
 			startDate: time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
 			endDate:   time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 			processed: false,
 		},
-		// Khoảng thời gian thứ ba: 2022
 		{
 			startDate: time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC),
 			endDate:   time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
 			processed: false,
 		},
-		// Khoảng thời gian thứ tư: 2021
 		{
 			startDate: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC),
 			endDate:   time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC),
 			processed: false,
 		},
-		// Khoảng thời gian thứ năm: 2019-2020
 		{
 			startDate: time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC),
 			endDate:   time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC),
 			processed: false,
 		},
-		// Khoảng thời gian thứ sáu: 2016-2018
 		{
 			startDate: time.Date(2016, 1, 1, 0, 0, 0, 0, time.UTC),
 			endDate:   time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC),
 			processed: false,
 		},
-		// Khoảng thời gian thứ bảy: 2012-2015
 		{
 			startDate: time.Date(2012, 1, 1, 0, 0, 0, 0, time.UTC),
 			endDate:   time.Date(2016, 1, 1, 0, 0, 0, 0, time.UTC),
 			processed: false,
 		},
-		// Khoảng thời gian thứ tám: Cũ nhất (trước 2012)
 		{
 			startDate: time.Date(2007, 1, 1, 0, 0, 0, 0, time.UTC),
 			endDate:   time.Date(2012, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -182,28 +171,21 @@ func generateTimeWindows() []timeWindow {
 	return windows
 }
 
-// Lấy URL truy vấn với thông số thời gian cụ thể
+//
 func (c *CrawlerV3) getTimeBasedQueryURL(window timeWindow) string {
 	baseUrl := "https://api.github.com/search/repositories"
 	startDate := window.startDate.Format("2006-01-02")
 	endDate := window.endDate.Format("2006-01-02")
-
-	// Tạo query với điều kiện thời gian
-	// q=stars:>1+created:{start_date}..{end_date}&sort=stars&order=desc
-	query := fmt.Sprintf("?q=stars:>100+created:%s..%s&sort=stars&order=desc", startDate, endDate)
-
-	return baseUrl + query
+	return fmt.Sprintf("%s?q=stars:>100+created:%s..%s&sort=stars&order=desc", baseUrl, startDate, endDate)
 }
 
-// Lấy time window tiếp theo để xử lý
+//
 func (c *CrawlerV3) getNextTimeWindow() *timeWindow {
 	c.currentWindowLock.Lock()
 	defer c.currentWindowLock.Unlock()
-
 	if c.currentWindowIdx >= len(c.timeWindows) {
 		return nil
 	}
-
 	window := &c.timeWindows[c.currentWindowIdx]
 	c.currentWindowIdx++
 	return window
@@ -214,66 +196,55 @@ func (c *CrawlerV3) Crawl() bool {
 	startTime := time.Now()
 	c.Logger.Info(ctx, "Bắt đầu crawl dữ liệu repository GitHub với chiến lược hai giai đoạn %s", startTime.Format(time.RFC3339))
 
-	// Tạo context với khả năng hủy
+	//
 	crawlCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Khởi chạy goroutine giám sát lỗi
+	// Monitor error
 	go c.errorMonitor(crawlCtx)
 
-	// Kết nối database
+	//
 	db, err := c.Mysql.Db()
 	if err != nil {
 		c.Logger.Error(ctx, "Không thể kết nối đến database: %v", err)
 		return false
 	}
 
-	// Giai đoạn 1: Thu thập thông tin về repositories
-	c.Logger.Info(ctx, "===== GIAI ĐOẠN 1: THU THẬP THÔNG TIN REPOSITORIES =====")
+	// Phase 1
+	c.Logger.Info(ctx, "===== Phase 1 =====")
 	c.collectRepositoriesPhase(ctx, db)
 
-	// Giai đoạn 2: Xử lý và lưu repositories, sau đó thu thập releases và commits
-	c.Logger.Info(ctx, "===== GIAI ĐOẠN 2: XỬ LÝ REPOSITORIES/RELEASES/COMMITS =====")
+	// Phase 2
+	c.Logger.Info(ctx, "===== Phase 2 =====")
 	c.processRepositoriesPhase(ctx, db)
 
-	// Ghi log kết quả
+	// Logging
 	close(c.errorChan)
 	c.logCrawlResults(ctx, startTime)
 	return true
 }
 
 func (c *CrawlerV3) startTimeWindowWorkers(ctx context.Context, db *gorm.DB, doneCh chan bool) {
-	// Số lượng time windows xử lý đồng thời
+	//
 	maxConcurrentWindows := 2
-
-	// Số lượng trang tối đa cho mỗi time window
 	maxPagesPerWindow := 10
-
-	// Số lượng kết quả trên mỗi trang
 	perPage := 100
 
+	//
 	for i := 0; i < maxConcurrentWindows; i++ {
 		c.pageWaitGroup.Add(1)
 		go func(workerID int) {
 			defer c.pageWaitGroup.Done()
 
 			for {
-				// Lấy time window tiếp theo
 				window := c.getNextTimeWindow()
 				if window == nil {
 					return
 				}
 
-				c.Logger.Info(ctx, "Worker %d bắt đầu xử lý time window từ %s đến %s",
-					workerID, window.startDate.Format("2006-01-02"), window.endDate.Format("2006-01-02"))
-
-				// Thực hiện crawl cho time window này
 				url := c.getTimeBasedQueryURL(*window)
-
-				// Override URL trong config
 				configCopy := *c.Config
 				configCopy.GithubApi.ApiUrl = url
-
 				var startPage int32 = 0
 				var windowPageWg sync.WaitGroup
 
@@ -281,13 +252,11 @@ func (c *CrawlerV3) startTimeWindowWorkers(ctx context.Context, db *gorm.DB, don
 					windowPageWg.Add(1)
 					go func() {
 						defer windowPageWg.Done()
-
 						for {
 							currentPage := atomic.AddInt32(&startPage, 1)
-							if currentPage > 10 { // GitHub chỉ cho phép tối đa 10 trang
+							if currentPage > 10 {
 								return
 							}
-
 							select {
 							case <-doneCh:
 								return
@@ -300,7 +269,6 @@ func (c *CrawlerV3) startTimeWindowWorkers(ctx context.Context, db *gorm.DB, don
 						}
 					}()
 				}
-
 				windowPageWg.Wait()
 			}
 		}(i)
@@ -308,29 +276,24 @@ func (c *CrawlerV3) startTimeWindowWorkers(ctx context.Context, db *gorm.DB, don
 }
 
 func (c *CrawlerV3) crawlTimeWindowPage(ctx context.Context, db *gorm.DB, page, perPage int, config *cfg.Config, doneCh chan bool) {
-	// Kiểm tra xem đã thu thập đủ dữ liệu chưa
 	select {
 	case <-doneCh:
-		return // Đã thu thập đủ dữ liệu, dừng xử lý
+		return
 	default:
-		// Tiếp tục xử lý
 	}
 
-	// Áp dụng rate limiting
+	// Rate limiting
 	c.applyRateLimit()
 
-	// Tạo caller mới với URL time-based
+	// Call API
 	apiCaller := githubapi.NewCaller(c.Logger, config, page, perPage)
-
-	// Gọi API
 	repos, err := apiCaller.Call()
 	if err != nil {
 		if c.isRateLimitError(err) {
-			c.Logger.Warn(ctx, "Rate limit hit, sleeping for 60 seconds: %v", err)
+			c.Logger.Warn(ctx, "Rate limit hit!")
 			time.Sleep(60 * time.Second)
 			repos, err = apiCaller.Call()
 			if err != nil {
-				c.Logger.Error(ctx, "Error after rate limit wait: %v", err)
 				return
 			}
 		} else {
@@ -339,24 +302,19 @@ func (c *CrawlerV3) crawlTimeWindowPage(ctx context.Context, db *gorm.DB, page, 
 		}
 	}
 
-	// Không có kết quả
+	//
 	if len(repos) == 0 {
 		c.Logger.Info(ctx, "No repositories found for page %d", page)
 		return
 	}
 
-	c.Logger.Info(ctx, "Found %d repositories on page %d", len(repos), page)
-
-	// Thu thập thông tin repositories để sau này sắp xếp và xử lý
+	//
 	c.allReposMutex.Lock()
 	initialCount := len(c.allRepos)
-
 	for _, repo := range repos {
-		// Chỉ thu thập thông tin, chưa xử lý repository
 		if repo.StargazersCount < 100 {
-			continue // Bỏ qua repositories có ít hơn 100 sao để tập trung vào những repo nổi bật
+			continue
 		}
-
 		c.allRepos = append(c.allRepos, RepositorySummary{
 			ID:        repo.Id,
 			Stars:     repo.StargazersCount,
@@ -369,15 +327,14 @@ func (c *CrawlerV3) crawlTimeWindowPage(ctx context.Context, db *gorm.DB, page, 
 	totalCollected := len(c.allRepos)
 	newRepos := totalCollected - initialCount
 	c.allReposMutex.Unlock()
-
 	c.Logger.Info(ctx, "Đã thu thập thêm %d repositories (tổng cộng: %d)", newRepos, totalCollected)
 
-	// Kiểm tra xem đã thu thập đủ dữ liệu chưa
-	if totalCollected >= 10000 { // Thu thập đủ dữ liệu để lọc 5000 repos tốt nhất
+	// Crawl 10k repositories
+	if totalCollected >= 10000 {
 		select {
-		case <-doneCh: // Đã đóng bởi goroutine khác
+		case <-doneCh:
 		default:
-			close(doneCh) // Đóng channel để báo hiệu đã thu thập đủ dữ liệu
+			close(doneCh)
 		}
 	}
 }
@@ -787,7 +744,7 @@ func (c *CrawlerV3) collectRepositoriesPhase(ctx context.Context, db *gorm.DB) {
 	c.Logger.Info(ctx, "Giai đoạn 1 kết thúc: Đã thu thập thông tin về %d repositories", repoCount)
 
 	// Thông báo giai đoạn 1 đã hoàn thành
-	close(c.repoCollectionDone)
+	close(c.firstPhaseDone)
 }
 
 // Phase 2: Xử lý repositories và thu thập releases và commits
