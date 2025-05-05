@@ -557,6 +557,10 @@ func (c *CrawlerV3) processTopRepositories(ctx context.Context, db *gorm.DB) {
 	// Tạo một worker pool để xử lý repo
 	c.Logger.Info(ctx, "Khởi tạo %d worker để lưu repositories vào database", cap(c.repoWorkers))
 
+	// Mảng lưu trữ các repo đã thử xử lý nhưng gặp lỗi để thử lại sau
+	var failedRepos []githubapi.GithubAPIResponse
+	var failedReposMutex sync.Mutex
+
 	// Xử lý từng repository trong danh sách top
 	for idx, repoSummary := range topRepos {
 		select {
@@ -573,6 +577,10 @@ func (c *CrawlerV3) processTopRepositories(ctx context.Context, db *gorm.DB) {
 				repoTx := db.Begin()
 				if repoTx.Error != nil {
 					c.errorChan <- repoTx.Error
+					// Thêm vào danh sách các repos cần thử lại
+					failedReposMutex.Lock()
+					failedRepos = append(failedRepos, repo)
+					failedReposMutex.Unlock()
 					return
 				}
 
@@ -580,6 +588,10 @@ func (c *CrawlerV3) processTopRepositories(ctx context.Context, db *gorm.DB) {
 					if r := recover(); r != nil {
 						repoTx.Rollback()
 						c.errorChan <- fmt.Errorf("panic xảy ra trong goroutine xử lý repo: %v", r)
+						// Thêm vào danh sách các repos cần thử lại
+						failedReposMutex.Lock()
+						failedRepos = append(failedRepos, repo)
+						failedReposMutex.Unlock()
 					}
 				}()
 
@@ -588,6 +600,10 @@ func (c *CrawlerV3) processTopRepositories(ctx context.Context, db *gorm.DB) {
 				if err != nil {
 					repoTx.Rollback()
 					c.errorChan <- err
+					// Thêm vào danh sách các repos cần thử lại
+					failedReposMutex.Lock()
+					failedRepos = append(failedRepos, repo)
+					failedReposMutex.Unlock()
 					return
 				}
 
@@ -599,6 +615,10 @@ func (c *CrawlerV3) processTopRepositories(ctx context.Context, db *gorm.DB) {
 				// Commit transaction
 				if err := repoTx.Commit().Error; err != nil {
 					c.errorChan <- err
+					// Thêm vào danh sách các repos cần thử lại
+					failedReposMutex.Lock()
+					failedRepos = append(failedRepos, repo)
+					failedReposMutex.Unlock()
 					return
 				}
 
@@ -620,10 +640,93 @@ func (c *CrawlerV3) processTopRepositories(ctx context.Context, db *gorm.DB) {
 		}
 	}
 
-	// Đợi semaphore empty trước khi trả về
+	// Đợi semaphore empty trước khi tiếp tục
 	for i := 0; i < cap(repoSemaphore); i++ {
 		repoSemaphore <- struct{}{}
 	}
+
+	// Thử lại các repos đã thất bại (tối đa 3 lần)
+	if len(failedRepos) > 0 {
+		c.Logger.Info(ctx, "Có %d repositories xử lý thất bại, đang thử lại", len(failedRepos))
+
+		maxRetries := 3
+		for retry := 0; retry < maxRetries; retry++ {
+			if len(failedRepos) == 0 {
+				break
+			}
+
+			c.Logger.Info(ctx, "Lần thử lại thứ %d cho %d repositories", retry+1, len(failedRepos))
+
+			// Tạo bản sao của danh sách repos thất bại và reset
+			currentFailedRepos := failedRepos
+			failedRepos = make([]githubapi.GithubAPIResponse, 0)
+
+			// Xử lý từng repository trong danh sách các repos thất bại
+			for _, repo := range currentFailedRepos {
+				repoTx := db.Begin()
+				if repoTx.Error != nil {
+					continue
+				}
+
+				repoModel, isSkipped, err := c.crawlRepo(repoTx, repo)
+				if err != nil || isSkipped {
+					repoTx.Rollback()
+					continue
+				}
+
+				// Commit transaction
+				if err := repoTx.Commit().Error; err != nil {
+					continue
+				}
+
+				// Tăng counter
+				newCount := atomic.AddInt32(&c.repoCount, 1)
+				c.Logger.Info(ctx, "Thử lại thành công: %d/%d - Đã xử lý %s/%s (ID: %d, Stars: %d)",
+					newCount, c.maxRepos, repoModel.User, repoModel.Name, repoModel.ID, repoModel.StarCount)
+			}
+		}
+	}
+
+	// Kiểm tra xem đã xử lý đủ số lượng repositories theo yêu cầu chưa
+	finalCount := atomic.LoadInt32(&c.repoCount)
+	if finalCount < c.maxRepos {
+		c.Logger.Warn(ctx, "Chú ý: Chỉ xử lý được %d/%d repositories yêu cầu", finalCount, c.maxRepos)
+
+		// Tìm thêm repositories từ danh sách đã thu thập nếu có thể
+		if len(c.allRepos) > int(c.maxRepos) {
+			remainingNeeded := int(c.maxRepos - finalCount)
+			additionalRepos := c.allRepos[c.maxRepos:min(len(c.allRepos), int(c.maxRepos)+remainingNeeded)]
+
+			c.Logger.Info(ctx, "Xử lý thêm %d repositories để đạt target", len(additionalRepos))
+
+			for _, repoSummary := range additionalRepos {
+				repoTx := db.Begin()
+				if repoTx.Error != nil {
+					continue
+				}
+
+				repoModel, isSkipped, err := c.crawlRepo(repoTx, repoSummary.APIRepo)
+				if err != nil || isSkipped {
+					repoTx.Rollback()
+					continue
+				}
+
+				if err := repoTx.Commit().Error; err != nil {
+					continue
+				}
+
+				newCount := atomic.AddInt32(&c.repoCount, 1)
+				c.Logger.Info(ctx, "Bổ sung: %d/%d - Đã xử lý %s/%s (ID: %d, Stars: %d)",
+					newCount, c.maxRepos, repoModel.User, repoModel.Name, repoModel.ID, repoModel.StarCount)
+
+				if newCount >= c.maxRepos {
+					break
+				}
+			}
+		}
+	}
+
+	c.Logger.Info(ctx, "Đã hoàn thành xử lý repositories: %d/%d", atomic.LoadInt32(&c.repoCount), c.maxRepos)
 }
 
 func (c *CrawlerV3) logCrawlResults(ctx context.Context, startTime time.Time) {
@@ -727,4 +830,12 @@ func (c *CrawlerV3) processRepositoriesPhase(ctx context.Context, db *gorm.DB) {
 				atomic.LoadInt32(&c.commitCount))
 		}
 	}
+}
+
+// helper function for integer minimum comparison
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
