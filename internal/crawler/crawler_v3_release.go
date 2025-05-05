@@ -7,7 +7,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	githubapi "github.com/thep200/github-crawler/internal/github_api"
 	"github.com/thep200/github-crawler/internal/model"
@@ -21,8 +20,8 @@ func (c *CrawlerV3) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *g
 	releases, err := apiCaller.CallReleases(user, repoName)
 	if err != nil {
 		if c.isRateLimitError(err) {
-			c.Logger.Info(ctx, "Rate limit đạt ngưỡng khi crawl releases, đợi 60 giây")
-			time.Sleep(60 * time.Second)
+			c.Logger.Info(ctx, "Rate limit đạt ngưỡng khi crawl releases, đợi...")
+			c.handleRateLimit(ctx, err)
 			releases, err = apiCaller.CallReleases(user, repoName)
 			if err != nil {
 				return nil, err

@@ -6,7 +6,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	githubapi "github.com/thep200/github-crawler/internal/github_api"
 	"github.com/thep200/github-crawler/internal/model"
@@ -21,7 +20,8 @@ func (c *CrawlerV2) crawlCommits(ctx context.Context, db *gorm.DB, apiCaller *gi
 	commits, err := apiCaller.CallCommits(user, repoName)
 	if err != nil {
 		if c.isRateLimitError(err) {
-			time.Sleep(60 * time.Second)
+			c.Logger.Info(ctx, "Rate limit đạt ngưỡng khi crawl commits, đợi...")
+			c.handleRateLimit(ctx, err)
 			commits, err = apiCaller.CallCommits(user, repoName)
 			if err != nil {
 				return nil, err

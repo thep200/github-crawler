@@ -362,10 +362,50 @@ func (c *CrawlerV2) applyRateLimit() {
 func (c *CrawlerV2) isRateLimitError(err error) bool {
 	return strings.Contains(err.Error(), "403") ||
 		strings.Contains(err.Error(), "rate limit") ||
-		strings.Contains(err.Error(), "API rate limit exceeded")
+		strings.Contains(err.Error(), "đạt giới hạn API")
 }
 
-//
+func (c *CrawlerV2) handleRateLimit(ctx context.Context, err error) {
+	if c.isRateLimitError(err) {
+		waitMinutes := c.Config.GithubApi.RateLimitResetMin
+		if waitMinutes <= 0 {
+			waitMinutes = 60 // Mặc định 60 phút nếu không có cấu hình
+		}
+
+		// Lấy thời gian reset cụ thể nếu có
+		var resetTime time.Time
+		var resetTimeStr string
+		if strings.Contains(err.Error(), "thời gian reset:") {
+			parts := strings.Split(err.Error(), "thời gian reset:")
+			if len(parts) > 1 {
+				resetTimeStr = strings.TrimSpace(parts[1])
+				parsedTime, parseErr := time.Parse(time.RFC3339, resetTimeStr)
+				if parseErr == nil {
+					resetTime = parsedTime
+				}
+			}
+		}
+
+		// Tính toán thời gian chờ
+		waitTime := time.Duration(waitMinutes) * time.Minute
+		if !resetTime.IsZero() {
+			// Nếu có thời gian reset cụ thể, sử dụng nó
+			now := time.Now()
+			calculatedWaitTime := resetTime.Sub(now)
+			if calculatedWaitTime > 0 {
+				waitTime = calculatedWaitTime
+			}
+		}
+
+		c.Logger.Warn(ctx, "🚫 Rate limit của GitHub API đạt ngưỡng. Chờ %v để tiếp tục (đến %s)",
+			waitTime.Round(time.Second), time.Now().Add(waitTime).Format(time.RFC3339))
+
+		time.Sleep(waitTime)
+
+		c.Logger.Info(ctx, "✅ Đã hết thời gian chờ rate limit, tiếp tục crawl")
+	}
+}
+
 func (c *CrawlerV2) logCrawlResults(ctx context.Context, startTime time.Time) {
 	endTime := time.Now()
 	duration := endTime.Sub(startTime)

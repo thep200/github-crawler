@@ -1,8 +1,8 @@
 package crawler
 
 import (
+	"context"
 	"strings"
-	"time"
 
 	githubapi "github.com/thep200/github-crawler/internal/github_api"
 	"github.com/thep200/github-crawler/internal/model"
@@ -10,13 +10,14 @@ import (
 )
 
 func (c *CrawlerV1) crawlCommits(db *gorm.DB, apiCaller *githubapi.Caller, user, repoName string, releaseID int) ([]githubapi.CommitResponse, int, error) {
+	ctx := context.Background()
 	c.applyRateLimit()
 
 	// Call API to get commits
 	commits, err := apiCaller.CallCommits(user, repoName)
 	if err != nil {
 		if c.isRateLimitError(err) {
-			time.Sleep(60 * time.Second)
+			c.handleRateLimit(ctx, err)
 			commits, err = apiCaller.CallCommits(user, repoName)
 			if err != nil {
 				return nil, 0, err

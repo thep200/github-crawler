@@ -133,7 +133,7 @@ func (c *CrawlerV1) Crawl() bool {
 		repos, err := apiCaller.Call()
 		if err != nil {
 			if c.isRateLimitError(err) {
-				time.Sleep(5 * time.Second)
+				c.handleRateLimit(ctx, err)
 				continue
 			}
 			c.Logger.Error(ctx, "Cannot call GitHub API: %v", err)
@@ -203,14 +203,57 @@ func (c *CrawlerV1) applyRateLimit() {
 }
 
 func (c *CrawlerV1) isRateLimitError(err error) bool {
-	return strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "rate limit")
+	return strings.Contains(err.Error(), "403") ||
+		strings.Contains(err.Error(), "rate limit") ||
+		strings.Contains(err.Error(), "đạt giới hạn API")
+}
+
+func (c *CrawlerV1) handleRateLimit(ctx context.Context, err error) {
+	if c.isRateLimitError(err) {
+		waitMinutes := c.Config.GithubApi.RateLimitResetMin
+		if waitMinutes <= 0 {
+			waitMinutes = 60 // Mặc định 60 phút nếu không có cấu hình
+		}
+
+		// Lấy thời gian reset cụ thể nếu có
+		var resetTime time.Time
+		var resetTimeStr string
+		if strings.Contains(err.Error(), "thời gian reset:") {
+			parts := strings.Split(err.Error(), "thời gian reset:")
+			if len(parts) > 1 {
+				resetTimeStr = strings.TrimSpace(parts[1])
+				parsedTime, parseErr := time.Parse(time.RFC3339, resetTimeStr)
+				if parseErr == nil {
+					resetTime = parsedTime
+				}
+			}
+		}
+
+		// Tính toán thời gian chờ
+		waitTime := time.Duration(waitMinutes) * time.Minute
+		if !resetTime.IsZero() {
+			// Nếu có thời gian reset cụ thể, sử dụng nó
+			now := time.Now()
+			calculatedWaitTime := resetTime.Sub(now)
+			if calculatedWaitTime > 0 {
+				waitTime = calculatedWaitTime
+			}
+		}
+
+		c.Logger.Warn(ctx, "🚫 Rate limit của GitHub API đạt ngưỡng. Chờ %v để tiếp tục (đến %s)",
+			waitTime.Round(time.Second), time.Now().Add(waitTime).Format(time.RFC3339))
+
+		time.Sleep(waitTime)
+
+		c.Logger.Info(ctx, "✅ Đã hết thời gian chờ rate limit, tiếp tục crawl")
+	}
 }
 
 func (c *CrawlerV1) logCrawlResults(ctx context.Context, startTime time.Time, totalRepos, totalReleases, totalCommits, skippedRepos int) {
 	endTime := time.Now()
 	duration := endTime.Sub(startTime)
 
-	c.Logger.Info(ctx, "==== KẾT QUẢ CRAWL ====")
+	c.Logger.Info(ctx, "==== KẾT QUẢ CRAWL V1 ====")
 	c.Logger.Info(ctx, "Thời gian bắt đầu: %s", startTime.Format(time.RFC3339))
 	c.Logger.Info(ctx, "Thời gian kết thúc: %s", endTime.Format(time.RFC3339))
 	c.Logger.Info(ctx, "Tổng thời gian thực hiện: %v", duration)

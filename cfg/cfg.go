@@ -23,7 +23,8 @@ type (
 		ReleasesApiUrl    string `yaml:"releases_api_url" mapstructure:"releases_api_url"` // Template URL for releases API
 		CommitsApiUrl     string `yaml:"commits_api_url" mapstructure:"commits_api_url"`   // Template URL for commits API
 		RequestsPerSecond int    `yaml:"requests_per_second" mapstructure:"requests_per_second"`
-		ThrottleDelay     int    `yaml:"throttle_delay" mapstructure:"throttle_delay"` // Milliseconds
+		ThrottleDelay     int    `yaml:"throttle_delay" mapstructure:"throttle_delay"`             // Milliseconds
+		RateLimitResetMin int    `yaml:"rate_limit_reset_min" mapstructure:"rate_limit_reset_min"` // Minutes to wait when rate limit is hit
 	}
 )
 

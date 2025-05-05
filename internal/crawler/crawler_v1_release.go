@@ -2,7 +2,6 @@ package crawler
 
 import (
 	"context"
-	"time"
 
 	githubapi "github.com/thep200/github-crawler/internal/github_api"
 	"github.com/thep200/github-crawler/internal/model"
@@ -16,7 +15,7 @@ func (c *CrawlerV1) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *g
 	releases, err := apiCaller.CallReleases(user, repoName)
 	if err != nil {
 		if c.isRateLimitError(err) {
-			time.Sleep(5 * time.Second)
+			c.handleRateLimit(ctx, err)
 			releases, err = apiCaller.CallReleases(user, repoName)
 			if err != nil {
 				return nil, 0, 0, err

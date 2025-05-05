@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,6 +39,40 @@ func NewCaller(logger log.Logger, config *cfg.Config, page int, perPage int) *Ca
 		Page:    page,
 		PerPage: perPage,
 	}
+}
+
+// HandleRateLimit xử lý rate limit dựa trên thông tin từ header API
+func (c *Caller) HandleRateLimit(ctx context.Context, resp *http.Response) (bool, error) {
+	rateRemaining := resp.Header.Get("X-RateLimit-Remaining")
+
+	if resp.StatusCode == http.StatusForbidden && rateRemaining == "0" {
+		resetTimeStr := resp.Header.Get("X-RateLimit-Reset")
+		resetTimeInt, err := strconv.ParseInt(resetTimeStr, 10, 64)
+
+		if err != nil {
+			// Nếu không thể parse được thời gian reset, sử dụng cấu hình mặc định
+			waitTime := time.Duration(c.Config.GithubApi.RateLimitResetMin) * time.Minute
+			c.Logger.Warn(ctx, "Rate limit hit! Không thể xác định thời gian reset chính xác. Chờ %v phút", c.Config.GithubApi.RateLimitResetMin)
+			return true, fmt.Errorf("đạt giới hạn API, chờ %v", waitTime)
+		}
+
+		// Chuyển đổi từ Unix timestamp sang Go time
+		resetTime := time.Unix(resetTimeInt, 0)
+		now := time.Now()
+		waitTime := resetTime.Sub(now)
+
+		if waitTime < 0 {
+			// Nếu thời gian reset đã qua, vẫn đợi một khoảng thời gian nhất định
+			waitTime = time.Duration(c.Config.GithubApi.RateLimitResetMin) * time.Minute
+		}
+
+		c.Logger.Warn(ctx, "Rate limit hit! GitHub API rate limit đạt ngưỡng. Cần chờ %v đến %v để tiếp tục",
+			waitTime.Round(time.Second), resetTime.Format(time.RFC3339))
+
+		return true, fmt.Errorf("đạt giới hạn API, thời gian reset: %v", resetTime.Format(time.RFC3339))
+	}
+
+	return false, nil
 }
 
 func (c *Caller) Call() ([]GithubAPIResponse, error) {
@@ -82,9 +117,10 @@ func (c *Caller) Call() ([]GithubAPIResponse, error) {
 	rateRemaining := resp.Header.Get("X-RateLimit-Remaining")
 	c.Logger.Info(ctx, "Rate limit remaining: %s", rateRemaining)
 
-	if resp.StatusCode == http.StatusForbidden && rateRemaining == "0" {
-		resetTime := resp.Header.Get("X-RateLimit-Reset")
-		return nil, fmt.Errorf("rate limit exceeded, resets at %s", resetTime)
+	// Kiểm tra rate limit
+	isRateLimited, rateLimitErr := c.HandleRateLimit(ctx, resp)
+	if isRateLimited {
+		return nil, rateLimitErr
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -136,10 +172,10 @@ func (c *Caller) CallReleases(user, repo string) ([]ReleaseResponse, error) {
 	}
 	defer resp.Body.Close()
 
-	//
-	rateRemaining := resp.Header.Get("X-RateLimit-Remaining")
-	if resp.StatusCode == http.StatusForbidden && rateRemaining == "0" {
-		return nil, fmt.Errorf("rate limit")
+	// Kiểm tra rate limit
+	isRateLimited, rateLimitErr := c.HandleRateLimit(ctx, resp)
+	if isRateLimited {
+		return nil, rateLimitErr
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -182,10 +218,10 @@ func (c *Caller) CallCommits(user, repo string) ([]CommitResponse, error) {
 	}
 	defer resp.Body.Close()
 
-	//
-	rateRemaining := resp.Header.Get("X-RateLimit-Remaining")
-	if resp.StatusCode == http.StatusForbidden && rateRemaining == "0" {
-		return nil, fmt.Errorf("rate limit")
+	// Kiểm tra rate limit
+	isRateLimited, rateLimitErr := c.HandleRateLimit(ctx, resp)
+	if isRateLimited {
+		return nil, rateLimitErr
 	}
 
 	if resp.StatusCode == 404 {
