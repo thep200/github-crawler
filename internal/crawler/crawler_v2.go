@@ -56,10 +56,10 @@ func NewCrawlerV2(logger log.Logger, config *cfg.Config, mysql *db.Mysql) (*Craw
 	rateLimiter := limiter.NewRateLimiter(config.GithubApi.RequestsPerSecond)
 
 	//
-	maxRepoWorkers := 10    // Increased from 5
-	maxReleaseWorkers := 20 // Increased from 10
-	maxCommitWorkers := 30  // Increased from 20
-	maxPageWorkers := 15    // Increased from 10
+	maxRepoWorkers := 10
+	maxReleaseWorkers := 20
+	maxCommitWorkers := 30
+	maxPageWorkers := 15
 
 	return &CrawlerV2{
 		Logger:                logger,
@@ -69,20 +69,20 @@ func NewCrawlerV2(logger log.Logger, config *cfg.Config, mysql *db.Mysql) (*Craw
 		ReleaseMd:             releaseMd,
 		CommitMd:              commitMd,
 		rateLimiter:           rateLimiter,
-		processedRepoIDs:      make(map[int64]bool, 10000),  // Increased capacity
-		processedReleaseKeys:  make(map[string]bool, 20000), // Increased capacity
-		processedCommitHashes: make(map[string]bool, 40000), // Increased capacity
+		processedRepoIDs:      make(map[int64]bool, 10000),
+		processedReleaseKeys:  make(map[string]bool, 20000),
+		processedCommitHashes: make(map[string]bool, 40000),
 		processedLock:         sync.RWMutex{},
 		repoWorkers:           make(chan struct{}, maxRepoWorkers),
 		releaseWorkers:        make(chan struct{}, maxReleaseWorkers),
 		commitWorkers:         make(chan struct{}, maxCommitWorkers),
 		pageWorkers:           make(chan struct{}, maxPageWorkers),
-		errorChan:             make(chan error, 200), // Increased buffer size
+		errorChan:             make(chan error, 200),
 		backgroundWg:          sync.WaitGroup{},
 		repoCount:             0,
 		releaseCount:          0,
 		commitCount:           0,
-		maxRepos:              10000, // Increased from 5000
+		maxRepos:              10000,
 	}, nil
 }
 
@@ -365,7 +365,7 @@ func (c *CrawlerV2) isRateLimitError(err error) bool {
 		strings.Contains(err.Error(), "API rate limit exceeded")
 }
 
-// Ghi log kết quả crawl với thông tin chi tiết hơn
+//
 func (c *CrawlerV2) logCrawlResults(ctx context.Context, startTime time.Time) {
 	endTime := time.Now()
 	duration := endTime.Sub(startTime)
