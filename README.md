@@ -394,6 +394,8 @@ sequenceDiagram
 
 ### Version 3
 
+time-based crawling strategy
+
 ## Compare
 
 ## Run command and access via `http://localhost:6060/pkg/prepuld/?m=all`

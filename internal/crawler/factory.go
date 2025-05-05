@@ -14,6 +14,8 @@ func FactoryCrawler(version string, logger log.Logger, config *cfg.Config, mysql
 		return NewCrawlerV1(logger, config, mysql)
 	case "v2":
 		return NewCrawlerV2(logger, config, mysql)
+	case "v3":
+		return NewCrawlerV3(logger, config, mysql)
 	default:
 		return nil, fmt.Errorf("[ERROR] Unsupported crawler version: %s", version)
 	}
