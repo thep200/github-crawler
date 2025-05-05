@@ -3,68 +3,202 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GitHub Repositories</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <title>GitHub Repository Browser</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 10px;
+            font-family: Arial, sans-serif;
+        }
+        /* Basic styling without external CSS */
+        .search-container {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 10px 0;
+            background-color: white;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            width: 100%;
+        }
+        .search-box {
+            flex-grow: 1;
+            margin-right: 20px;
+        }
+        #searchInput {
+            width: 100%;
+            padding: 10px;
+            font-size: 16px;
+            height: 40px;
+            box-sizing: border-box;
+        }
+        .pagination {
+            white-space: nowrap;
+            display: flex;
+            align-items: center;
+        }
+        .pagination button {
+            padding: 10px 15px;
+            font-size: 16px;
+            height: 40px;
+        }
+        .pagination span {
+            margin: 0 10px;
+        }
+        .table-container {
+            height: calc(100vh - 80px);
+            overflow-y: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        thead {
+            position: sticky;
+            top: 0;
+            background-color: white;
+            z-index: 5;
+        }
+        th, td {
+            padding: 8px;
+            text-align: left;
+            border: 1px solid #ddd;
+        }
+        /* Center action buttons in their cells */
+        td.action-cell {
+            text-align: center;
+        }
+        .popup {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: white;
+            padding: 20px;
+            border: 1px solid black;
+            width: 80%;
+            height: 80vh;
+            z-index: 100;
+            flex-direction: column;
+        }
+        .popup.active {
+            display: flex;
+        }
+        .popup-header {
+            position: sticky;
+            top: 0;
+            background-color: white;
+            padding-bottom: 10px;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #ddd;
+        }
+        .popup-content {
+            flex-grow: 1;
+            overflow-y: auto;
+            margin-bottom: 10px;
+        }
+        .popup-content table {
+            width: 100%;
+        }
+        .popup-footer {
+            position: sticky;
+            bottom: 0;
+            background-color: white;
+            padding-top: 10px;
+            margin-top: auto; /* Push to bottom of flex container */
+            border-top: 1px solid #ddd;
+            text-align: center;
+            width: 100%;
+        }
+        .popup-footer button {
+            padding: 8px 16px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <div class="control-bar">
-            <input type="text" id="searchInput" placeholder="Search repositories...">
-            <button id="prevPage" disabled>&laquo; Previous</button>
-            <span id="pageInfo">Page 1 of 200</span>
-            <button id="nextPage">Next &raquo;</button>
+    <!-- Search and pagination container -->
+    <div class="search-container">
+        <div class="search-box">
+            <input type="text" id="searchInput" placeholder="Type to search...">
         </div>
 
-        <div class="table-container">
-            <table id="repoTable">
+        <div class="pagination">
+            <button id="prevPage">Previous</button>
+            <span id="pageInfo">Page 1 of 1</span>
+            <button id="nextPage">Next</button>
+        </div>
+    </div>
+
+    <!-- Repository table -->
+    <div class="table-container">
+        <table border="1" cellpadding="5" cellspacing="0">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>User</th>
+                    <th>Name</th>
+                    <th>Stars</th>
+                    <th>Forks</th>
+                    <th>Watches</th>
+                    <th>Issues</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="repoTableBody">
+                <!-- Repository rows will be inserted here -->
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Popup for releases -->
+    <div id="releasesPopup" class="popup">
+        <div class="popup-header">
+            <h2>Releases</h2>
+        </div>
+        <div class="popup-content">
+            <table border="1" cellpadding="5" cellspacing="0">
                 <thead>
                     <tr>
-                        <th>Repository</th>
-                        <th>User</th>
-                        <th>Stars</th>
-                        <th>Forks</th>
-                        <th>Watchers</th>
-                        <th>Issues</th>
+                        <th>ID</th>
+                        <th>Content</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
-                <tbody id="repoTableBody">
-                    <!-- Repository rows will be inserted here via JavaScript -->
+                <tbody id="releaseTableBody">
+                    <!-- Release rows will be inserted here -->
                 </tbody>
             </table>
         </div>
-
-        <div id="loadingIndicator">Loading repositories...</div>
-        <div id="noResultsMessage" style="display: none;">No repositories found matching your criteria.</div>
-    </div>
-
-    <!-- Modal for showing releases -->
-    <div id="releaseModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2 id="releaseModalTitle">Releases for Repository</h2>
-                <span class="close-modal" id="closeReleaseModal">&times;</span>
-            </div>
-            <div class="modal-body" id="releaseModalBody">
-                <div id="releaseLoadingIndicator">Loading releases...</div>
-                <div id="releasesList"></div>
-                <div id="noReleasesMessage" style="display: none;">No releases found for this repository.</div>
-            </div>
+        <div class="popup-footer">
+            <button onclick="closeReleasesPopup()">Close</button>
         </div>
     </div>
 
-    <!-- Modal for showing commits -->
-    <div id="commitModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2 id="commitModalTitle">Commits for Release</h2>
-                <span class="close-modal" id="closeCommitModal">&times;</span>
-            </div>
-            <div class="modal-body" id="commitModalBody">
-                <div id="commitLoadingIndicator">Loading commits...</div>
-                <div id="commitsList"></div>
-                <div id="noCommitsMessage" style="display: none;">No commits found for this release.</div>
-            </div>
+    <!-- Popup for commits -->
+    <div id="commitsPopup" class="popup">
+        <div class="popup-header">
+            <h2>Commits</h2>
+        </div>
+        <div class="popup-content">
+            <table border="1" cellpadding="5" cellspacing="0">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Hash</th>
+                        <th>Message</th>
+                    </tr>
+                </thead>
+                <tbody id="commitTableBody">
+                    <!-- Commit rows will be inserted here -->
+                </tbody>
+            </table>
+        </div>
+        <div class="popup-footer">
+            <button onclick="closeCommitsPopup()">Close</button>
         </div>
     </div>
 

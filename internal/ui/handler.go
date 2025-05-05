@@ -100,7 +100,7 @@ func (h *Handler) getRepos(w http.ResponseWriter, r *http.Request) {
 	pageSizeStr := r.URL.Query().Get("pageSize")
 	pageSize, err := strconv.Atoi(pageSizeStr)
 	if err != nil || pageSize < 1 || pageSize > 100 {
-		pageSize = 25
+		pageSize = 50 // Changed default from 25 to 50 per requirements
 	}
 
 	// Get search parameter
