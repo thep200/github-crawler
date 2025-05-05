@@ -103,11 +103,22 @@ func (h *Handler) getRepos(w http.ResponseWriter, r *http.Request) {
 		pageSize = 25
 	}
 
+	// Get search parameter
+	search := r.URL.Query().Get("search")
+
 	offset := (page - 1) * pageSize
 
 	// Query the database for repositories
+	query := h.db.Offset(offset).Limit(pageSize).Order("star_count DESC")
+
+	// Apply search filter if provided
+	if search != "" {
+		search = "%" + search + "%"
+		query = query.Where("name LIKE ? OR user LIKE ?", search, search)
+	}
+
 	var repos []model.Repo
-	result := h.db.Offset(offset).Limit(pageSize).Order("star_count DESC").Find(&repos)
+	result := query.Find(&repos)
 	if result.Error != nil {
 		h.Logger.Error(r.Context(), "Failed to fetch repositories: %v", result.Error)
 		http.Error(w, "Failed to fetch repositories", http.StatusInternalServerError)
@@ -116,7 +127,14 @@ func (h *Handler) getRepos(w http.ResponseWriter, r *http.Request) {
 
 	// Count total repositories for pagination
 	var totalCount int64
-	h.db.Model(&model.Repo{}).Count(&totalCount)
+	countQuery := h.db.Model(&model.Repo{})
+
+	// Apply search filter to count query if provided
+	if search != "" {
+		countQuery = countQuery.Where("name LIKE ? OR user LIKE ?", search, search)
+	}
+
+	countQuery.Count(&totalCount)
 
 	// Convert to response format
 	var repositories []Repository

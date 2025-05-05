@@ -5,7 +5,9 @@ const state = {
     totalPages: 1,
     searchQuery: '',
     currentRepoId: null,
-    currentRepoName: null
+    currentRepoName: null,
+    currentReleaseId: null,
+    searchTimeout: null
 };
 
 // DOM elements
@@ -23,17 +25,54 @@ const elements = {
     releaseModalTitle: document.getElementById('releaseModalTitle'),
     releasesList: document.getElementById('releasesList'),
     releaseLoadingIndicator: document.getElementById('releaseLoadingIndicator'),
-    noReleasesMessage: document.getElementById('noReleasesMessage')
+    noReleasesMessage: document.getElementById('noReleasesMessage'),
+    commitModal: document.getElementById('commitModal'),
+    closeCommitModal: document.getElementById('closeCommitModal'),
+    commitModalTitle: document.getElementById('commitModalTitle'),
+    commitsList: document.getElementById('commitsList'),
+    commitLoadingIndicator: document.getElementById('commitLoadingIndicator'),
+    noCommitsMessage: document.getElementById('noCommitsMessage')
 };
+
+// Parse URL parameters
+function getUrlParams() {
+    const urlParams = new URLSearchParams(window.location.search);
+    return {
+        search: urlParams.get('search') || '',
+        page: parseInt(urlParams.get('page')) || 1
+    };
+}
+
+// Update URL when parameters change
+function updateUrl() {
+    const url = new URL(window.location.href);
+
+    if (state.searchQuery) {
+        url.searchParams.set('search', state.searchQuery);
+    } else {
+        url.searchParams.delete('search');
+    }
+
+    url.searchParams.set('page', state.currentPage);
+
+    window.history.replaceState({}, '', url);
+}
 
 // Event listeners
 document.addEventListener('DOMContentLoaded', () => {
+    // Get parameters from URL
+    const urlParams = getUrlParams();
+    state.searchQuery = urlParams.search;
+    state.currentPage = urlParams.page || 1;
+    elements.searchInput.value = state.searchQuery;
+
     fetchRepositories();
 
     // Pagination
     elements.prevPageBtn.addEventListener('click', () => {
         if (state.currentPage > 1) {
             state.currentPage--;
+            updateUrl();
             fetchRepositories();
         }
     });
@@ -41,23 +80,23 @@ document.addEventListener('DOMContentLoaded', () => {
     elements.nextPageBtn.addEventListener('click', () => {
         if (state.currentPage < state.totalPages) {
             state.currentPage++;
+            updateUrl();
             fetchRepositories();
         }
     });
 
-    // Search
-    elements.searchButton.addEventListener('click', () => {
-        state.searchQuery = elements.searchInput.value.trim();
-        state.currentPage = 1;
-        fetchRepositories();
-    });
+    // Auto-search with debounce
+    elements.searchInput.addEventListener('input', () => {
+        if (state.searchTimeout) {
+            clearTimeout(state.searchTimeout);
+        }
 
-    elements.searchInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
+        state.searchTimeout = setTimeout(() => {
             state.searchQuery = elements.searchInput.value.trim();
             state.currentPage = 1;
+            updateUrl();
             fetchRepositories();
-        }
+        }, 500);
     });
 
     // Modal close buttons
@@ -69,6 +108,18 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('click', (e) => {
         if (e.target === elements.releaseModal) {
             elements.releaseModal.style.display = 'none';
+        }
+    });
+
+    // Commit modal close button
+    elements.closeCommitModal.addEventListener('click', () => {
+        elements.commitModal.style.display = 'none';
+    });
+
+    // Close commit modal when clicking outside
+    window.addEventListener('click', (e) => {
+        if (e.target === elements.commitModal) {
+            elements.commitModal.style.display = 'none';
         }
     });
 });
@@ -101,7 +152,7 @@ async function fetchRepositories() {
     }
 }
 
-// Render repository data to the table
+// Render repository data to the table with plain HTML buttons
 function renderRepositories(repositories) {
     elements.repoTableBody.innerHTML = '';
 
@@ -116,8 +167,8 @@ function renderRepositories(repositories) {
         const row = document.createElement('tr');
 
         row.innerHTML = `
-            <td>${escapeHtml(repo.name)}</td>
-            <td>${escapeHtml(repo.user)}</td>
+            <td title="${escapeHtml(repo.name)}">${escapeHtml(repo.name)}</td>
+            <td title="${escapeHtml(repo.user)}">${escapeHtml(repo.user)}</td>
             <td>★ ${repo.starCount.toLocaleString()}</td>
             <td>${repo.forkCount.toLocaleString()}</td>
             <td>${repo.watchCount.toLocaleString()}</td>
@@ -184,7 +235,7 @@ async function openReleaseModal(repoId, repoName) {
     }
 }
 
-// Render releases in the modal
+// Render releases in the modal with plain HTML buttons
 function renderReleases(releases) {
     elements.releasesList.innerHTML = '';
 
@@ -207,10 +258,78 @@ function renderReleases(releases) {
         releaseCard.innerHTML = `
             <h3>Release #${release.id}</h3>
             <p>${escapeHtml(content)}</p>
-            <div>Created: ${release.createdAt}</div>
+            <div class="release-card-footer">
+                <div>Created: ${release.createdAt}</div>
+                <button data-release-id="${release.id}">View Commits</button>
+            </div>
         `;
 
         elements.releasesList.appendChild(releaseCard);
+    });
+
+    // Add event listeners for commit buttons
+    document.querySelectorAll('button[data-release-id]').forEach(button => {
+        button.addEventListener('click', () => {
+            const releaseId = button.getAttribute('data-release-id');
+            openCommitModal(releaseId);
+        });
+    });
+}
+
+// Open modal with commits for a release
+async function openCommitModal(releaseId) {
+    state.currentReleaseId = releaseId;
+
+    elements.commitModalTitle.textContent = `Commits for Release #${releaseId}`;
+    elements.commitModal.style.display = 'block';
+    elements.commitsList.innerHTML = '';
+    elements.commitLoadingIndicator.style.display = 'block';
+    elements.noCommitsMessage.style.display = 'none';
+
+    try {
+        const response = await fetch(`/api/commits?releaseId=${releaseId}`);
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+
+        const commits = await response.json();
+        renderCommits(commits);
+
+    } catch (error) {
+        console.error('Error fetching commits:', error);
+        elements.noCommitsMessage.textContent = `Error: ${error.message}`;
+        elements.noCommitsMessage.style.display = 'block';
+    } finally {
+        elements.commitLoadingIndicator.style.display = 'none';
+    }
+}
+
+// Render commits in the modal
+function renderCommits(commits) {
+    elements.commitsList.innerHTML = '';
+
+    if (!commits || commits.length === 0) {
+        elements.noCommitsMessage.style.display = 'block';
+        return;
+    }
+
+    elements.noCommitsMessage.style.display = 'none';
+
+    commits.forEach(commit => {
+        const commitCard = document.createElement('div');
+        commitCard.className = 'release-card'; // Reuse the same styling
+
+        const message = commit.message && commit.message.length > 150
+            ? commit.message.substring(0, 150) + '...'
+            : commit.message || 'No commit message';
+
+        commitCard.innerHTML = `
+            <h4>Commit: <code>${commit.hash.substring(0, 8)}</code></h4>
+            <p>${escapeHtml(message)}</p>
+            <div>Created: ${commit.createdAt}</div>
+        `;
+
+        elements.commitsList.appendChild(commitCard);
     });
 }
 

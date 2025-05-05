@@ -8,40 +8,32 @@
 </head>
 <body>
     <div class="container">
-        <header>
-            <h1>GitHub Top Repositories</h1>
-            <p>Browse through the 5000 most starred repositories on GitHub</p>
-        </header>
-
-        <div class="filter-container">
-            <div class="search-bar">
-                <input type="text" id="searchInput" placeholder="Search repositories...">
-                <button id="searchButton">Search</button>
-            </div>
-            <div class="pagination">
-                <button id="prevPage" disabled>&laquo; Previous</button>
-                <span id="pageInfo">Page 1 of 1</span>
-                <button id="nextPage">Next &raquo;</button>
-            </div>
+        <div class="control-bar">
+            <input type="text" id="searchInput" placeholder="Search repositories...">
+            <button id="prevPage" disabled>&laquo; Previous</button>
+            <span id="pageInfo">Page 1 of 200</span>
+            <button id="nextPage">Next &raquo;</button>
         </div>
 
-        <!-- Simple HTML Table -->
-        <table border="1" cellpadding="10" cellspacing="0" id="repoTable">
-            <thead>
-                <tr>
-                    <th>Repository</th>
-                    <th>User</th>
-                    <th>Stars</th>
-                    <th>Forks</th>
-                    <th>Watchers</th>
-                    <th>Issues</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody id="repoTableBody">
-                <!-- Repository rows will be inserted here via JavaScript -->
-            </tbody>
-        </table>
+        <div class="table-container">
+            <table id="repoTable">
+                <thead>
+                    <tr>
+                        <th>Repository</th>
+                        <th>User</th>
+                        <th>Stars</th>
+                        <th>Forks</th>
+                        <th>Watchers</th>
+                        <th>Issues</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="repoTableBody">
+                    <!-- Repository rows will be inserted here via JavaScript -->
+                </tbody>
+            </table>
+        </div>
+
         <div id="loadingIndicator">Loading repositories...</div>
         <div id="noResultsMessage" style="display: none;">No repositories found matching your criteria.</div>
     </div>
