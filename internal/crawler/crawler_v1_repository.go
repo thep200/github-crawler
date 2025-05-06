@@ -7,7 +7,6 @@ import (
 )
 
 func (c *CrawlerV1) crawlRepo(db *gorm.DB, repo githubapi.GithubAPIResponse) (*model.Repo, bool, error) {
-	// Extract username and repo name
 	user := repo.Owner.Login
 	repoName := repo.Name
 
@@ -55,7 +54,7 @@ func (c *CrawlerV1) crawlRepo(db *gorm.DB, repo githubapi.GithubAPIResponse) (*m
 		return nil, false, err
 	}
 
-	// Commit immediately after creating the repository
+	//
 	if err := tx.Commit().Error; err != nil {
 		return nil, false, err
 	}

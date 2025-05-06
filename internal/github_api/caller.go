@@ -41,7 +41,6 @@ func NewCaller(logger log.Logger, config *cfg.Config, page int, perPage int) *Ca
 	}
 }
 
-// HandleRateLimit xử lý rate limit dựa trên thông tin từ header API
 func (c *Caller) HandleRateLimit(ctx context.Context, resp *http.Response) (bool, error) {
 	rateRemaining := resp.Header.Get("X-RateLimit-Remaining")
 
@@ -50,24 +49,25 @@ func (c *Caller) HandleRateLimit(ctx context.Context, resp *http.Response) (bool
 		resetTimeInt, err := strconv.ParseInt(resetTimeStr, 10, 64)
 
 		if err != nil {
-			// Nếu không thể parse được thời gian reset, sử dụng cấu hình mặc định
 			waitTime := time.Duration(c.Config.GithubApi.RateLimitResetMin) * time.Minute
-			c.Logger.Warn(ctx, "Rate limit hit! Không thể xác định thời gian reset chính xác. Chờ %v phút", c.Config.GithubApi.RateLimitResetMin)
-			return true, fmt.Errorf("đạt giới hạn API, chờ %v", waitTime)
+			return true, fmt.Errorf("ratelimit hit, chờ %v", waitTime)
 		}
 
-		// Chuyển đổi từ Unix timestamp sang Go time
+		//
 		resetTime := time.Unix(resetTimeInt, 0)
 		now := time.Now()
 		waitTime := resetTime.Sub(now)
 
+		// Chờ thêm sau khi qua thời gian reset
 		if waitTime < 0 {
-			// Nếu thời gian reset đã qua, vẫn đợi một khoảng thời gian nhất định
 			waitTime = time.Duration(c.Config.GithubApi.RateLimitResetMin) * time.Minute
 		}
 
-		c.Logger.Warn(ctx, "Rate limit hit! GitHub API rate limit đạt ngưỡng. Cần chờ %v đến %v để tiếp tục",
-			waitTime.Round(time.Second), resetTime.Format(time.RFC3339))
+		c.Logger.Warn(
+			ctx,
+			"Rate limit hit. Cần chờ %v đến %v để tiếp tục",
+			waitTime.Round(time.Second), resetTime.Format(time.RFC3339),
+		)
 
 		return true, fmt.Errorf("đạt giới hạn API, thời gian reset: %v", resetTime.Format(time.RFC3339))
 	}
@@ -77,8 +77,6 @@ func (c *Caller) HandleRateLimit(ctx context.Context, resp *http.Response) (bool
 
 func (c *Caller) Call() ([]GithubAPIResponse, error) {
 	ctx := context.Background()
-
-	// Ensure the API URL has the correct sort parameters
 	baseUrl := c.Config.GithubApi.ApiUrl
 	if !strings.Contains(baseUrl, "sort=stars") {
 		if strings.Contains(baseUrl, "?") {
@@ -124,27 +122,19 @@ func (c *Caller) Call() ([]GithubAPIResponse, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("cannot received response: %v", resp.Status)
+		return nil, fmt.Errorf("Call failed: %v", resp.Status)
 	}
 
-	// Giải mã phản hồi
+	//
 	rawResponse := &RawResponse{}
 	err = json.NewDecoder(resp.Body).Decode(rawResponse)
 	if err != nil {
 		return nil, err
 	}
 
-	c.Logger.Info(ctx, "Total repositories found: %d, page: %d, items received: %d",
-		rawResponse.TotalCount, c.Page, len(rawResponse.Items))
-
-	if c.Page*c.PerPage > 1000 {
-		c.Logger.Warn(ctx, "GitHub API only provides access to the first 1,000 search results")
-	}
-
 	return rawResponse.Items, nil
 }
 
-// CallReleases gọi API releases của GitHub cho một repository cụ thể
 func (c *Caller) CallReleases(user, repo string) ([]ReleaseResponse, error) {
 	ctx := context.Background()
 

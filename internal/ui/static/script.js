@@ -155,7 +155,7 @@ function displayRepositories(repositories) {
             if (hasReleases) {
                 actionCell.innerHTML = `<button onclick="showReleases(${repo.id})">Releases</button>`;
             } else {
-                actionCell.innerHTML = '<span>No releases</span>';
+                actionCell.innerHTML = '<span></span>';
             }
         });
 
@@ -231,7 +231,7 @@ function displayReleases(releases, repoId) {
             if (hasCommits) {
                 actionCell.innerHTML = `<button onclick="showCommits(${release.id})">Commits</button>`;
             } else {
-                actionCell.innerHTML = '<span>No commits</span>';
+                actionCell.innerHTML = '<span></span>';
             }
         });
 

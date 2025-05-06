@@ -1,4 +1,3 @@
-// filepath: /Users/thep200/Projects/Study/github-crawler/internal/crawler/crawler_v3_repository.go
 package crawler
 
 import (
@@ -19,12 +18,12 @@ func (c *CrawlerV3) crawlRepo(tx *gorm.DB, repo githubapi.GithubAPIResponse) (*m
 		}
 	}
 
-	// Kiểm tra xem repository đã được xử lý chưa
+	// Kiểm tra xem repository đã được xử lý hay chưa
 	if c.isProcessed(repo.Id) {
 		return nil, true, nil
 	}
 
-	// Tạo repository model
+	//
 	repoModel := &model.Repo{
 		ID:         int(repo.Id),
 		User:       model.TruncateString(user, 250),
@@ -40,12 +39,10 @@ func (c *CrawlerV3) crawlRepo(tx *gorm.DB, repo githubapi.GithubAPIResponse) (*m
 		},
 	}
 
-	// Lưu repository vào database
+	// Save
 	if err := tx.Create(repoModel).Error; err != nil {
 		return nil, false, err
 	}
-
-	// Đánh dấu repository đã được xử lý
 	c.addProcessedID(repo.Id)
 	return repoModel, false, nil
 }

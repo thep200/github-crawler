@@ -37,13 +37,10 @@ func (c *CrawlerV1) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *g
 
 		if releaseModel != nil {
 			releasesCount++
-
-			// Process commits for this release
 			_, count, err := c.crawlCommits(db, apiCaller, user, repoName, releaseModel.ID)
 			if err != nil {
 				continue
 			}
-
 			commitsCount += count
 		}
 	}
@@ -58,7 +55,6 @@ func (c *CrawlerV1) crawlRelease(db *gorm.DB, release githubapi.ReleaseResponse,
 		releaseName = release.TagName
 	}
 
-	// Skip if this release has already been processed
 	if c.isReleaseProcessed(repoID, releaseName) {
 		return nil, nil
 	}
@@ -73,7 +69,6 @@ func (c *CrawlerV1) crawlRelease(db *gorm.DB, release githubapi.ReleaseResponse,
 		},
 	}
 
-	// Start a transaction for this release
 	tx := db.Begin()
 	if tx.Error != nil {
 		return nil, tx.Error
@@ -90,12 +85,10 @@ func (c *CrawlerV1) crawlRelease(db *gorm.DB, release githubapi.ReleaseResponse,
 		return nil, err
 	}
 
-	// Commit immediately after creating the release
 	if err := tx.Commit().Error; err != nil {
 		return nil, err
 	}
 
-	// Mark release as processed
 	c.addProcessedRelease(repoID, releaseName)
 
 	return releaseModel, nil

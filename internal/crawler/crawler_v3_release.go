@@ -1,9 +1,7 @@
-// filepath: /Users/thep200/Projects/Study/github-crawler/internal/crawler/crawler_v3_release.go
 package crawler
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,13 +12,12 @@ import (
 )
 
 func (c *CrawlerV3) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *githubapi.Caller, user, repoName string, repoID int) ([]githubapi.ReleaseResponse, error) {
+	// Call API releases
 	c.applyRateLimit()
-
-	// Gọi API để lấy releases
 	releases, err := apiCaller.CallReleases(user, repoName)
 	if err != nil {
 		if c.isRateLimitError(err) {
-			c.Logger.Info(ctx, "Rate limit đạt ngưỡng khi crawl releases, đợi...")
+			c.Logger.Info(ctx, "Crawl releases hit ratelimit")
 			c.handleRateLimit(ctx, err)
 			releases, err = apiCaller.CallReleases(user, repoName)
 			if err != nil {
@@ -31,34 +28,31 @@ func (c *CrawlerV3) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *g
 		}
 	}
 
-	// Nếu không có releases nào, trả về mảng rỗng
+	//
 	if len(releases) == 0 {
 		return releases, nil
 	}
 
+	// Logging
 	c.Logger.Info(ctx, "Đã tìm thấy %d releases cho repo %s/%s", len(releases), user, repoName)
 
-	// Kênh lỗi
+	//
 	releaseErrChan := make(chan error, len(releases))
 	var wg sync.WaitGroup
-
-	// Context cho việc xử lý releases
 	releaseCtx, cancelRelease := context.WithCancel(ctx)
 	defer cancelRelease()
 
-	// Semaphore để giới hạn số lượng commit processed đồng thời
+	// Semaphore
 	commitSemaphore := make(chan struct{}, 5)
 
-	// Xử lý từng release
+	//
 	for i := range releases {
 		release := releases[i]
-
-		// Nếu đã xử lý release này thì bỏ qua
 		if c.isReleaseProcessed(repoID, release.Name) {
 			continue
 		}
 
-		// Worker cho release
+		//
 		select {
 		case <-releaseCtx.Done():
 			return releases, ctx.Err()
@@ -67,8 +61,6 @@ func (c *CrawlerV3) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *g
 			go func(release githubapi.ReleaseResponse) {
 				defer wg.Done()
 				defer func() { <-c.releaseWorkers }()
-
-				// Tạo transaction mới cho mỗi release
 				releaseTx := db.Begin()
 				if releaseTx.Error != nil {
 					releaseErrChan <- releaseTx.Error
@@ -78,11 +70,10 @@ func (c *CrawlerV3) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *g
 				defer func() {
 					if r := recover(); r != nil {
 						releaseTx.Rollback()
-						releaseErrChan <- fmt.Errorf("panic xảy ra trong goroutine xử lý release: %v", r)
 					}
 				}()
 
-				// Lưu release
+				// Save release
 				releaseModel := &model.Release{
 					Content: model.TruncateString(release.Body, 65000),
 					RepoID:  repoID,
@@ -93,7 +84,6 @@ func (c *CrawlerV3) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *g
 					},
 				}
 
-				// Lưu release vào database
 				if err := releaseTx.Create(releaseModel).Error; err != nil {
 					releaseTx.Rollback()
 					if !strings.Contains(err.Error(), "Duplicate entry") {
@@ -102,38 +92,36 @@ func (c *CrawlerV3) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *g
 					return
 				}
 
-				// Commit transaction
+				//
 				if err := releaseTx.Commit().Error; err != nil {
 					releaseErrChan <- err
 					return
 				}
 
-				// Cập nhật counter và đánh dấu đã xử lý
+				//
 				atomic.AddInt32(&c.releaseCount, 1)
 				c.addProcessedRelease(repoID, release.Name)
 
-				// Xử lý commits cho release này
+				//
 				select {
 				case commitSemaphore <- struct{}{}:
 					go func() {
 						defer func() { <-commitSemaphore }()
 						_, err := c.crawlCommits(releaseCtx, db, apiCaller, user, repoName, releaseModel.ID)
 						if err != nil {
-							c.Logger.Warn(ctx, "Lỗi khi crawl commits cho release %s: %v", release.Name, err)
+							c.Logger.Warn(ctx, "Crawl commits cho release %s: %v failed", release.Name, err)
 						}
 					}()
 				default:
-					// Nếu đã đạt giới hạn worker, xử lý trong goroutine hiện tại
 					c.crawlCommits(releaseCtx, db, apiCaller, user, repoName, releaseModel.ID)
 				}
 			}(release)
 		}
 	}
 
-	// Đợi tất cả workers hoàn thành
 	wg.Wait()
 
-	// Kiểm tra lỗi
+	//
 	select {
 	case err := <-releaseErrChan:
 		return releases, err

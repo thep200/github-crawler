@@ -21,7 +21,6 @@ type GithubAPIResponse struct {
 	OpenIssuesCount int64  `json:"open_issues_count"`
 }
 
-// ReleaseResponse đại diện cho phản hồi API release của GitHub
 type ReleaseResponse struct {
 	ID          int64     `json:"id"`
 	TagName     string    `json:"tag_name"`
@@ -32,21 +31,18 @@ type ReleaseResponse struct {
 	HTMLURL     string    `json:"html_url"`
 }
 
-// CommitResponse đại diện cho phản hồi API commit của GitHub
 type CommitResponse struct {
 	SHA     string       `json:"sha"`
 	Commit  CommitDetail `json:"commit"`
 	HTMLURL string       `json:"html_url"`
 }
 
-// CommitDetail chứa thông tin chi tiết về commit
 type CommitDetail struct {
 	Author    CommitAuthor `json:"author"`
 	Committer CommitAuthor `json:"committer"`
 	Message   string       `json:"message"`
 }
 
-// CommitAuthor chứa thông tin về tác giả commit
 type CommitAuthor struct {
 	Name  string    `json:"name"`
 	Email string    `json:"email"`

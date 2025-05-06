@@ -52,21 +52,18 @@ func NewCrawlerV1(logger log.Logger, config *cfg.Config, mysql *db.Mysql) (*Craw
 	}, nil
 }
 
-// Check if a repository has been processed
 func (c *CrawlerV1) isProcessed(repoID int64) bool {
 	c.processedLock.RLock()
 	defer c.processedLock.RUnlock()
 	return c.processedRepoIDs[repoID]
 }
 
-// Add a processed repository ID to the tracking map
 func (c *CrawlerV1) addProcessedID(repoID int64) {
 	c.processedLock.Lock()
 	defer c.processedLock.Unlock()
 	c.processedRepoIDs[repoID] = true
 }
 
-// Check if a release has been processed
 func (c *CrawlerV1) isReleaseProcessed(repoID int, releaseName string) bool {
 	key := fmt.Sprintf("%d_%s", repoID, releaseName)
 	c.processedLock.RLock()
@@ -74,7 +71,6 @@ func (c *CrawlerV1) isReleaseProcessed(repoID int, releaseName string) bool {
 	return c.processedReleaseKeys[key]
 }
 
-// Add a processed release to the tracking map
 func (c *CrawlerV1) addProcessedRelease(repoID int, releaseName string) {
 	key := fmt.Sprintf("%d_%s", repoID, releaseName)
 	c.processedLock.Lock()
@@ -82,14 +78,12 @@ func (c *CrawlerV1) addProcessedRelease(repoID int, releaseName string) {
 	c.processedReleaseKeys[key] = true
 }
 
-// Check if a commit has been processed
 func (c *CrawlerV1) isCommitProcessed(commitHash string) bool {
 	c.processedLock.RLock()
 	defer c.processedLock.RUnlock()
 	return c.processedCommitHashes[commitHash]
 }
 
-// Add a processed commit to the tracking map
 func (c *CrawlerV1) addProcessedCommit(commitHash string) {
 	c.processedLock.Lock()
 	defer c.processedLock.Unlock()
@@ -97,9 +91,9 @@ func (c *CrawlerV1) addProcessedCommit(commitHash string) {
 }
 
 func (c *CrawlerV1) Crawl() bool {
+	//
 	ctx := context.Background()
 	startTime := time.Now()
-	c.Logger.Info(ctx, "Start crawl data repository GitHub %s", startTime.Format(time.RFC3339))
 
 	// Connect to database
 	db, err := c.Mysql.Db()
@@ -203,49 +197,25 @@ func (c *CrawlerV1) applyRateLimit() {
 }
 
 func (c *CrawlerV1) isRateLimitError(err error) bool {
-	return strings.Contains(err.Error(), "403") ||
-		strings.Contains(err.Error(), "rate limit") ||
-		strings.Contains(err.Error(), "đạt giới hạn API")
+	return strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "rate limit")
 }
 
 func (c *CrawlerV1) handleRateLimit(ctx context.Context, err error) {
 	if c.isRateLimitError(err) {
 		waitMinutes := c.Config.GithubApi.RateLimitResetMin
 		if waitMinutes <= 0 {
-			waitMinutes = 60 // Mặc định 60 phút nếu không có cấu hình
+			waitMinutes = 60
 		}
 
-		// Lấy thời gian reset cụ thể nếu có
-		var resetTime time.Time
-		var resetTimeStr string
-		if strings.Contains(err.Error(), "thời gian reset:") {
-			parts := strings.Split(err.Error(), "thời gian reset:")
-			if len(parts) > 1 {
-				resetTimeStr = strings.TrimSpace(parts[1])
-				parsedTime, parseErr := time.Parse(time.RFC3339, resetTimeStr)
-				if parseErr == nil {
-					resetTime = parsedTime
-				}
-			}
-		}
-
-		// Tính toán thời gian chờ
 		waitTime := time.Duration(waitMinutes) * time.Minute
-		if !resetTime.IsZero() {
-			// Nếu có thời gian reset cụ thể, sử dụng nó
-			now := time.Now()
-			calculatedWaitTime := resetTime.Sub(now)
-			if calculatedWaitTime > 0 {
-				waitTime = calculatedWaitTime
-			}
-		}
 
-		c.Logger.Warn(ctx, "🚫 Rate limit của GitHub API đạt ngưỡng. Chờ %v để tiếp tục (đến %s)",
-			waitTime.Round(time.Second), time.Now().Add(waitTime).Format(time.RFC3339))
-
+		c.Logger.Warn(
+			ctx,
+			"Rate limit của GitHub API hit!. Chờ %v để tiếp tục (đến %s)",
+			waitTime.Round(time.Second), time.Now().Add(waitTime).Format(time.RFC3339),
+		)
 		time.Sleep(waitTime)
-
-		c.Logger.Info(ctx, "✅ Đã hết thời gian chờ rate limit, tiếp tục crawl")
+		c.Logger.Info(ctx, "Continue crawl")
 	}
 }
 

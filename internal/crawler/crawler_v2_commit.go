@@ -12,7 +12,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// Crawl commits cho một release
 func (c *CrawlerV2) crawlCommits(ctx context.Context, db *gorm.DB, apiCaller *githubapi.Caller, user, repoName string, releaseID int) ([]githubapi.CommitResponse, error) {
 	c.applyRateLimit()
 

@@ -29,15 +29,11 @@ func (c *CrawlerV1) crawlCommits(db *gorm.DB, apiCaller *githubapi.Caller, user,
 
 	commitsCount := 0
 
-	// Process each commit
+	//
 	for _, commit := range commits {
 		if err := c.saveCommit(db, commit, releaseID); err != nil {
-			if !strings.Contains(err.Error(), "Duplicate entry") {
-				return commits, commitsCount, err
-			}
-			continue
+			return commits, commitsCount, err
 		}
-
 		commitsCount++
 	}
 
@@ -65,7 +61,7 @@ func (c *CrawlerV1) saveCommit(db *gorm.DB, commit githubapi.CommitResponse, rel
 		},
 	}
 
-	// Start a transaction for this commit
+	//
 	tx := db.Begin()
 	if tx.Error != nil {
 		return tx.Error
@@ -89,7 +85,7 @@ func (c *CrawlerV1) saveCommit(db *gorm.DB, commit githubapi.CommitResponse, rel
 		return nil
 	}
 
-	// Commit immediately after creating the commit
+	//
 	if err := tx.Commit().Error; err != nil {
 		return err
 	}
