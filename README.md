@@ -1,6 +1,8 @@
 # Github repository crawler
 
-Project này crawl thông tin của 5000 `repository` có nhiều sao nhất trên github. Có bao gồm thông tin về `release` và `commits` tương ứng
+Project này crawl thông tin của 5000 `repository` có nhiều sao nhất trên github. Có bao gồm thông tin về `release` và `commits` tương ứng.
+
+Cài `mermaid` extension để xem các biểu đồ trực quan.
 
 ## Starting
 

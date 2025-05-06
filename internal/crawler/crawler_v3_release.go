@@ -12,13 +12,18 @@ import (
 )
 
 func (c *CrawlerV3) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *githubapi.Caller, user, repoName string, repoID int) ([]githubapi.ReleaseResponse, error) {
-	// Call API releases
+	//
+	atomic.AddInt32(&c.pendingRelease, 1)
+	defer atomic.AddInt32(&c.pendingRelease, -1)
+
+	// Gọi API để lấy thông tin releases
 	c.applyRateLimit()
 	releases, err := apiCaller.CallReleases(user, repoName)
 	if err != nil {
 		if c.isRateLimitError(err) {
 			c.Logger.Info(ctx, "Crawl releases hit ratelimit")
 			c.handleRateLimit(ctx, err)
+			c.applyRateLimit()
 			releases, err = apiCaller.CallReleases(user, repoName)
 			if err != nil {
 				return nil, err
@@ -28,24 +33,24 @@ func (c *CrawlerV3) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *g
 		}
 	}
 
-	//
+	// Nếu không có releases nào, trả về mảng rỗng
 	if len(releases) == 0 {
 		return releases, nil
 	}
 
-	// Logging
+	// Ghi log
 	c.Logger.Info(ctx, "Đã tìm thấy %d releases cho repo %s/%s", len(releases), user, repoName)
 
-	//
+	// Kênh lỗi cho các goroutine xử lý releases
 	releaseErrChan := make(chan error, len(releases))
 	var wg sync.WaitGroup
 	releaseCtx, cancelRelease := context.WithCancel(ctx)
 	defer cancelRelease()
 
-	// Semaphore
+	// Semaphore cho commits
 	commitSemaphore := make(chan struct{}, 5)
 
-	//
+	// Xử lý từng release
 	for i := range releases {
 		release := releases[i]
 		if c.isReleaseProcessed(repoID, release.Name) {
@@ -73,7 +78,7 @@ func (c *CrawlerV3) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *g
 					}
 				}()
 
-				// Save release
+				// Lưu thông tin release vào database
 				releaseModel := &model.Release{
 					Content: model.TruncateString(release.Body, 65000),
 					RepoID:  repoID,
@@ -92,17 +97,17 @@ func (c *CrawlerV3) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *g
 					return
 				}
 
-				//
+				// Commit transaction
 				if err := releaseTx.Commit().Error; err != nil {
 					releaseErrChan <- err
 					return
 				}
 
-				//
+				// Cập nhật counter và đánh dấu đã xử lý
 				atomic.AddInt32(&c.releaseCount, 1)
 				c.addProcessedRelease(repoID, release.Name)
 
-				//
+				// Crawl commits cho release này
 				select {
 				case commitSemaphore <- struct{}{}:
 					go func() {
@@ -113,12 +118,16 @@ func (c *CrawlerV3) crawlReleases(ctx context.Context, db *gorm.DB, apiCaller *g
 						}
 					}()
 				default:
-					c.crawlCommits(releaseCtx, db, apiCaller, user, repoName, releaseModel.ID)
+					_, err := c.crawlCommits(releaseCtx, db, apiCaller, user, repoName, releaseModel.ID)
+					if err != nil {
+						c.Logger.Warn(ctx, "Crawl commits cho release %s: %v failed", release.Name, err)
+					}
 				}
 			}(release)
 		}
 	}
 
+	//
 	wg.Wait()
 
 	//

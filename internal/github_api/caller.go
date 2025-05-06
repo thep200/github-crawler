@@ -69,7 +69,7 @@ func (c *Caller) HandleRateLimit(ctx context.Context, resp *http.Response) (bool
 			waitTime.Round(time.Second), resetTime.Format(time.RFC3339),
 		)
 
-		return true, fmt.Errorf("đạt giới hạn API, thời gian reset: %v", resetTime.Format(time.RFC3339))
+		return true, fmt.Errorf("ratelimit API hit, thời gian reset: %v", resetTime.Format(time.RFC3339))
 	}
 
 	return false, nil
