@@ -121,7 +121,7 @@ func NewCrawlerV3(logger log.Logger, config *cfg.Config, mysql *db.Mysql) (*Craw
 		timeWindows:           timeWindows,
 		currentWindowIdx:      0,
 		allReposMutex:         sync.Mutex{},
-		allRepos:              make([]RepositorySummary, 0, 10000),
+		allRepos:              make([]RepositorySummary, 0, 20000),
 		firstPhaseDone:        make(chan struct{}),
 		secondPhaseDone:       make(chan struct{}),
 	}, nil
@@ -337,7 +337,7 @@ func (c *CrawlerV3) crawlTimeWindowPage(ctx context.Context, db *gorm.DB, page, 
 	c.Logger.Info(ctx, "Đã thu thập thêm %d repositories (tổng cộng: %d)", newRepos, totalCollected)
 
 	// Crawl 10k repositories
-	if totalCollected >= 10000 {
+	if totalCollected >= 20000 {
 		select {
 		case <-doneCh:
 		default:
@@ -462,7 +462,7 @@ func (c *CrawlerV3) handleRateLimit(ctx context.Context, err error) {
 		//
 		c.Logger.Info(
 			ctx,
-			"Pausing goroutines due to rate limit - pending releases: %d, pending commits: %d",
+			"Tạm dừng các goroutines do hit rate limit - releases: %d, commits: %d",
 			atomic.LoadInt32(&c.pendingRelease),
 			atomic.LoadInt32(&c.pendingCommit),
 		)
@@ -472,7 +472,6 @@ func (c *CrawlerV3) handleRateLimit(ctx context.Context, err error) {
 
 		//
 		c.rateLimiter = limiter.NewRateLimiter(c.Config.GithubApi.RequestsPerSecond)
-		c.Logger.Info(ctx, "Rate limit wait complete, resuming crawl operations")
 	}
 }
 
@@ -699,12 +698,12 @@ func (c *CrawlerV3) collectRepositoriesPhase(ctx context.Context, db *gorm.DB) {
 			c.allReposMutex.Lock()
 			repoCount := len(c.allRepos)
 			c.allReposMutex.Unlock()
-			if repoCount >= 10000 {
+			if repoCount >= 20000 {
 				c.Logger.Info(ctx, "Đã crawl đủ thông tin %d repositories trong phase 1", repoCount)
 				close(doneCh)
 				return
 			}
-			c.Logger.Info(ctx, "Đang crawl repositories phase 1: %d/10000", repoCount)
+			c.Logger.Info(ctx, "Đang crawl repositories phase 1: %d/20000", repoCount)
 			time.Sleep(5 * time.Second)
 		}
 	}()
