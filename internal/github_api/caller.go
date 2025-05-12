@@ -19,10 +19,14 @@ import (
 )
 
 type Caller struct {
-	Logger  log.Logger
-	Config  *cfg.Config
-	Page    int
-	PerPage int
+	Logger         log.Logger
+	Config         *cfg.Config
+	Page           int
+	PerPage        int
+	originalToken  string
+	usingToken     bool
+	tokenDisabled  bool
+	tokenDisableAt time.Time
 }
 
 // Mapping response
@@ -34,10 +38,13 @@ type RawResponse struct {
 
 func NewCaller(logger log.Logger, config *cfg.Config, page int, perPage int) *Caller {
 	return &Caller{
-		Logger:  logger,
-		Config:  config,
-		Page:    page,
-		PerPage: perPage,
+		Logger:        logger,
+		Config:        config,
+		Page:          page,
+		PerPage:       perPage,
+		originalToken: config.GithubApi.AccessToken,
+		usingToken:    config.GithubApi.AccessToken != "",
+		tokenDisabled: false,
 	}
 }
 
@@ -50,6 +57,7 @@ func (c *Caller) HandleRateLimit(ctx context.Context, resp *http.Response) (bool
 
 		if err != nil {
 			waitTime := time.Duration(c.Config.GithubApi.RateLimitResetMin) * time.Minute
+			c.toggleToken(ctx) // Toggle token state
 			return true, fmt.Errorf("ratelimit hit, chờ %v", waitTime)
 		}
 
@@ -65,14 +73,44 @@ func (c *Caller) HandleRateLimit(ctx context.Context, resp *http.Response) (bool
 
 		c.Logger.Warn(
 			ctx,
-			"Rate limit hit. Cần chờ %v đến %v để tiếp tục",
+			"Rate limit hit. Cần chờ %v đến %v để tiếp tục. Toggling token usage.",
 			waitTime.Round(time.Second), resetTime.Format(time.RFC3339),
 		)
 
+		c.toggleToken(ctx) // Toggle token state
 		return true, fmt.Errorf("ratelimit API hit, thời gian reset: %v", resetTime.Format(time.RFC3339))
 	}
 
 	return false, nil
+}
+
+// toggleToken switches between using token and not using token
+func (c *Caller) toggleToken(ctx context.Context) {
+	if c.originalToken == "" {
+		// We don't have a token to toggle
+		return
+	}
+
+	if c.usingToken {
+		// Disable token usage
+		c.usingToken = false
+		c.tokenDisabled = true
+		c.tokenDisableAt = time.Now()
+		c.Logger.Info(ctx, "Token disabled due to rate limiting")
+	} else {
+		// Re-enable token usage
+		c.usingToken = true
+		c.tokenDisabled = false
+		c.Logger.Info(ctx, "Token re-enabled after rate limiting")
+	}
+}
+
+// getAuthHeader returns the authorization header value based on current token state
+func (c *Caller) getAuthHeader() string {
+	if c.usingToken && c.originalToken != "" {
+		return fmt.Sprintf("token %s", c.originalToken)
+	}
+	return ""
 }
 
 func (c *Caller) Call() ([]GithubAPIResponse, error) {
@@ -97,8 +135,13 @@ func (c *Caller) Call() ([]GithubAPIResponse, error) {
 
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
-	if c.Config.GithubApi.AccessToken != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("token %s", c.Config.GithubApi.AccessToken))
+	// Use current token state
+	authHeader := c.getAuthHeader()
+	if authHeader != "" {
+		req.Header.Set("Authorization", authHeader)
+		c.Logger.Debug(ctx, "Using token for request")
+	} else {
+		c.Logger.Debug(ctx, "Not using token for request")
 	}
 
 	// Thực hiện request
@@ -150,8 +193,11 @@ func (c *Caller) CallReleases(user, repo string) ([]ReleaseResponse, error) {
 
 	//
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	if c.Config.GithubApi.AccessToken != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("token %s", c.Config.GithubApi.AccessToken))
+
+	// Use current token state
+	authHeader := c.getAuthHeader()
+	if authHeader != "" {
+		req.Header.Set("Authorization", authHeader)
 	}
 
 	//
@@ -196,8 +242,11 @@ func (c *Caller) CallCommits(user, repo string) ([]CommitResponse, error) {
 
 	//
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	if c.Config.GithubApi.AccessToken != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("token %s", c.Config.GithubApi.AccessToken))
+
+	// Use current token state
+	authHeader := c.getAuthHeader()
+	if authHeader != "" {
+		req.Header.Set("Authorization", authHeader)
 	}
 
 	//

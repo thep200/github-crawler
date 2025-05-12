@@ -127,53 +127,6 @@ func NewCrawlerV3(logger log.Logger, config *cfg.Config, mysql *db.Mysql) (*Craw
 	}, nil
 }
 
-// Time-base
-func generateTimeWindows() []timeWindow {
-	windows := []timeWindow{
-		{
-			startDate: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-			endDate:   time.Now(),
-			processed: false,
-		},
-		{
-			startDate: time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
-			endDate:   time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-			processed: false,
-		},
-		{
-			startDate: time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC),
-			endDate:   time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
-			processed: false,
-		},
-		{
-			startDate: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC),
-			endDate:   time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC),
-			processed: false,
-		},
-		{
-			startDate: time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC),
-			endDate:   time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC),
-			processed: false,
-		},
-		{
-			startDate: time.Date(2016, 1, 1, 0, 0, 0, 0, time.UTC),
-			endDate:   time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC),
-			processed: false,
-		},
-		{
-			startDate: time.Date(2012, 1, 1, 0, 0, 0, 0, time.UTC),
-			endDate:   time.Date(2016, 1, 1, 0, 0, 0, 0, time.UTC),
-			processed: false,
-		},
-		{
-			startDate: time.Date(2007, 1, 1, 0, 0, 0, 0, time.UTC),
-			endDate:   time.Date(2012, 1, 1, 0, 0, 0, 0, time.UTC),
-			processed: false,
-		},
-	}
-	return windows
-}
-
 func (c *CrawlerV3) getTimeBasedQueryURL(window timeWindow) string {
 	baseUrl := "https://api.github.com/search/repositories"
 	startDate := window.startDate.Format("2006-01-02")
@@ -860,11 +813,4 @@ func (c *CrawlerV3) processMoreRepositories(ctx context.Context, db *gorm.DB, re
 	}
 
 	c.Logger.Info(ctx, "Đã xử lý thêm được %d/%d repositories cần thiết", processed, remainingCount)
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

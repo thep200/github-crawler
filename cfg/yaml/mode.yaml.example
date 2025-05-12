@@ -20,3 +20,13 @@ github_api:
   requests_per_second: 10
   throttle_delay: 500
   rate_limit_reset_min: 60
+
+kafka:
+  brokers:
+    - "localhost:10000"
+    - "localhost:10001"
+    - "localhost:10002"
+  producer:
+    topic_repo: "crawler.repos"
+    topic_commit: "crawler.commits"
+    topic_release: "crawler.releases"

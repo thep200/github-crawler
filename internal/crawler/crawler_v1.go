@@ -232,12 +232,3 @@ func (c *CrawlerV1) logCrawlResults(ctx context.Context, startTime time.Time, to
 	c.Logger.Info(ctx, "Tổng số commits đã crawl: %d", totalCommits)
 	c.Logger.Info(ctx, "Tổng số repository bỏ qua (đã tồn tại): %d", skippedRepos)
 }
-
-// Lấy username và tên repository từ tên đầy đủ
-func extractUserAndRepo(fullName string) (string, string) {
-	parts := strings.Split(fullName, "/")
-	if len(parts) > 1 {
-		return parts[0], parts[1]
-	}
-	return "unknown", fullName
-}
